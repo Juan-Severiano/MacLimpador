@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - copilot/add-readme-license-and-issues
+      - main
+  workflow_dispatch:
 
 permissions:
   issues: write
