@@ -1,0 +1,570 @@
+name: Bootstrap Issues and Milestones
+
+on:
+  push:
+    branches:
+      - copilot/add-readme-license-and-issues
+      - main
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  create-issues:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if already bootstrapped
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COUNT=$(gh issue list --repo ${{ github.repository }} --state all --limit 1 --json number | jq length)
+          echo "issue_count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Create labels
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LABELS=(
+            "documentation:0075ca:Documentation improvements or additions"
+            "enhancement:a2eeef:New feature or request"
+            "storage:e4e669:Storage optimization module"
+            "memory:d4c5f9:Memory optimization module"
+            "cpu:f9d0c4:CPU and performance module"
+            "deletion:c2e0c6:Deletion module"
+            "machine-learning:bfd4f2:Machine learning and intelligent analysis"
+            "ui:fef2c0:User interface"
+            "performance:e99695:Performance improvements"
+          )
+          for ENTRY in "${LABELS[@]}"; do
+            NAME="${ENTRY%%:*}"
+            REST="${ENTRY#*:}"
+            COLOR="${REST%%:*}"
+            DESC="${REST#*:}"
+            gh api repos/${{ github.repository }}/labels \
+              -X POST \
+              -f name="$NAME" \
+              -f color="$COLOR" \
+              -f description="$DESC" 2>/dev/null || true
+          done
+
+      - name: Create Milestone - Storage Optimization
+        if: steps.check.outputs.issue_count == '0'
+        id: milestone
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RESPONSE=$(gh api repos/${{ github.repository }}/milestones \
+            -X POST \
+            -f title="Milestone 1: Storage Optimization" \
+            -f description="First major module: intelligent storage analysis and cleanup. Covers junk detection, orphaned files, Homebrew package management, file relocation, and storage visualization." \
+            -f state="open")
+          MILESTONE_NUMBER=$(echo "$RESPONSE" | jq '.number')
+          echo "milestone_number=$MILESTONE_NUMBER" >> "$GITHUB_OUTPUT"
+
+      # ─── Documentation Issues ──────────────────────────────────────────────
+
+      - name: Issue - Add README
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "Add README.md" \
+            --body "## Overview
+
+          Create a clear and informative \`README.md\` at the root of the repository.
+
+          ## Content
+
+          - Project name and short description (what MacLimpador does and for whom)
+          - Screenshot or demo GIF showing the main interface
+          - Requirements (macOS version, dependencies)
+          - Installation instructions
+          - Usage overview for each module (Storage, Memory, CPU, Deletion)
+          - Contributing section pointing to \`CONTRIBUTING.md\`
+          - License badge and reference
+
+          ## Notes
+
+          Keep it concise. Avoid marketing language. The README is the first thing a contributor sees." \
+            --label "documentation"
+
+      - name: Issue - Add LICENSE
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "Add LICENSE" \
+            --body "## Task
+
+          Choose and add a license file to the repository.
+
+          ## Options
+
+          - **MIT** - permissive, good for open-source tools, allows commercial use
+          - **GPL-3.0** - copyleft, requires derivative works to remain open source
+          - **Apache 2.0** - permissive with patent grant
+
+          ## Recommendation
+
+          MIT is the most common choice for macOS utility apps intended for open use.
+
+          ## Steps
+
+          1. Decide on the license
+          2. Add a \`LICENSE\` file at the root with the full license text
+          3. Update the README badge once the license is set" \
+            --label "documentation"
+
+      - name: Issue - Add CONTRIBUTING
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "Add CONTRIBUTING.md" \
+            --body "## Task
+
+          Create a \`CONTRIBUTING.md\` file that guides external contributors.
+
+          ## Content
+
+          - How to fork and set up the development environment
+          - Branch naming conventions (e.g., \`feature/\`, \`fix/\`, \`docs/\`)
+          - Commit message style
+          - Pull request process and review expectations
+          - Code style guidelines (SwiftLint rules, formatting)
+          - How to report bugs or request features (reference issue templates)" \
+            --label "documentation"
+
+      - name: Issue - Add .gitignore
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "Add .gitignore for Swift/Xcode" \
+            --body "## Task
+
+          Add a proper \`.gitignore\` file tailored for Swift and Xcode projects.
+
+          ## Should ignore
+
+          - \`*.xcuserstate\`
+          - \`xcuserdata/\`
+          - \`.DS_Store\`
+          - \`DerivedData/\`
+          - \`*.ipa\`, \`*.dSYM.zip\`
+          - SPM build artifacts (\`.build/\`, \`Package.resolved\` if not pinned intentionally)
+
+          ## Reference
+
+          Use [github/gitignore Swift template](https://github.com/github/gitignore/blob/main/Swift.gitignore) as a base." \
+            --label "documentation"
+
+      - name: Issue - Add CHANGELOG
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "Add CHANGELOG.md" \
+            --body "## Task
+
+          Start a \`CHANGELOG.md\` following the [Keep a Changelog](https://keepachangelog.com) format.
+
+          ## Structure
+
+          \`\`\`
+          ## [Unreleased]
+          ### Added
+          ### Changed
+          ### Fixed
+
+          ## [0.1.0] - YYYY-MM-DD
+          ### Added
+          - Initial project structure
+          \`\`\`
+
+          ## Notes
+
+          Update the changelog at each release milestone. Helps users and contributors track what changed between versions." \
+            --label "documentation"
+
+      # ─── Storage Optimization Module ──────────────────────────────────────
+
+      - name: Issue - Storage Module Architecture
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "[Storage] Module architecture and scanning pipeline" \
+            --milestone "${{ steps.milestone.outputs.milestone_number }}" \
+            --body "## Goal
+
+          Define and implement the foundational architecture for the Storage Optimization module.
+
+          ## Scope
+
+          - \`StorageScanner\`: entry point that orchestrates all sub-scanners
+          - \`ScanResult\` model: represents a found item (path, size, type, confidence score, reason)
+          - \`StorageCategory\` enum: Junk, Orphaned, Package, Cache, Log, Duplicate
+          - Async/concurrent scanning pipeline using Swift concurrency (\`async/await\`, \`TaskGroup\`)
+          - Progress reporting protocol so the UI can react to scan state
+
+          ## Acceptance Criteria
+
+          - The scanner can run a full disk scan and return a list of \`ScanResult\` objects
+          - Each result carries metadata: file path, size on disk, category, and a human-readable reason
+          - The pipeline is cancellable without leaving the system in an inconsistent state" \
+            --label "storage,enhancement"
+
+      - name: Issue - Junk File Detection with ML
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "[Storage] Intelligent junk file detection using usage patterns" \
+            --milestone "${{ steps.milestone.outputs.milestone_number }}" \
+            --body "## Goal
+
+          Build a module that learns over time which files are likely junk based on usage patterns and file metadata.
+
+          ## Approach
+
+          Use **Create ML / Core ML** with a lightweight classification model trained on features such as:
+
+          - Last access time (days since last read)
+          - Last modification time
+          - File extension category (temp, log, cache, user data)
+          - File size relative to directory average
+          - Whether the parent application is still installed
+          - Directory path patterns (e.g., \`~/Library/Caches/\`, \`/tmp/\`)
+
+          ## Phases
+
+          1. **Rule-based baseline**: classify files using deterministic heuristics (last accessed > 90 days, known temp patterns)
+          2. **Feature extraction**: build a \`FileFeatureExtractor\` that produces a feature vector per file
+          3. **Model training**: collect labeled data from user feedback (kept vs deleted) and train a binary classifier (e.g., Decision Tree or Logistic Regression via Create ML)
+          4. **Inference**: integrate the trained model into the scanner pipeline via \`MLModel\`
+
+          ## Acceptance Criteria
+
+          - Baseline heuristics catch known junk patterns with zero false positives on system-critical files
+          - The model can be retrained from accumulated user feedback
+          - Results include a confidence score (0.0–1.0) so the UI can sort by certainty" \
+            --label "storage,machine-learning,enhancement"
+
+      - name: Issue - Orphaned Files Detection
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "[Storage] Detect orphaned files from uninstalled applications" \
+            --milestone "${{ steps.milestone.outputs.milestone_number }}" \
+            --body "## Goal
+
+          Identify files left behind by applications that are no longer installed on the system.
+
+          ## Known orphan locations
+
+          - \`~/Library/Application Support/<AppName>/\`
+          - \`~/Library/Preferences/com.<bundle.id>.plist\`
+          - \`~/Library/Caches/<bundle.id>/\`
+          - \`~/Library/Containers/<bundle.id>/\`
+          - \`~/Library/Group Containers/\`
+          - \`/Library/Application Support/<AppName>/\`
+
+          ## Strategy
+
+          1. Build a list of installed applications by reading \`/Applications/\` and App Store receipts
+          2. Extract bundle identifiers from each app's \`Info.plist\`
+          3. For each directory in known orphan locations, check if the owning app is still installed
+          4. If not installed, flag the directory as an orphan with its total size
+
+          ## Acceptance Criteria
+
+          - Scanner correctly identifies orphan directories for at least 5 common apps (e.g., Alfred, Sketch, Slack)
+          - No false positives for system-owned directories
+          - Report includes app name, bundle ID, and total disk space reclaimed if deleted" \
+            --label "storage,enhancement"
+
+      - name: Issue - Homebrew Package Management
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "[Storage] Homebrew package analysis and cleanup" \
+            --milestone "${{ steps.milestone.outputs.milestone_number }}" \
+            --body "## Goal
+
+          Integrate with Homebrew to list installed packages, identify large or unused ones, and provide cleanup options.
+
+          ## Features
+
+          ### Listing
+          - Run \`brew list --formula\` and \`brew list --cask\` to enumerate installed packages
+          - For each package, resolve its install path and calculate disk usage (\`du -sh\`)
+          - Flag packages that have not been used recently (heuristic: last binary access date)
+
+          ### Cleanup
+          - Run \`brew cleanup --dry-run\` to list stale downloads and old versions
+          - Show how much space \`brew cleanup\` would reclaim before executing it
+          - Option to remove specific formulae or casks selected by the user
+
+          ### Dependency graph
+          - Detect packages installed as dependencies (leaf vs. non-leaf) using \`brew leaves\`
+          - Highlight packages that are no longer required by any top-level formula
+
+          ## Acceptance Criteria
+
+          - Application lists all installed packages with name, version, and size
+          - User can select individual packages for removal with confirmation dialog
+          - Cleanup operations are performed via Homebrew's own tooling (no manual file deletion)" \
+            --label "storage,enhancement"
+
+      - name: Issue - File Relocation Feature
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "[Storage] Move files to an external or secondary location" \
+            --milestone "${{ steps.milestone.outputs.milestone_number }}" \
+            --body "## Goal
+
+          Allow the user to move identified files or folders to a different location (e.g., external drive, NAS, or a designated archive folder) instead of deleting them.
+
+          ## Features
+
+          - Select destination folder via \`NSOpenPanel\`
+          - Move files while preserving directory structure relative to a chosen root
+          - Show estimated transfer size and available space at destination before proceeding
+          - Create a manifest file at the destination listing what was moved and from where (for future reference or restoration)
+          - Optional: create a symbolic link at the original location so dependent apps do not break
+
+          ## Acceptance Criteria
+
+          - Files are moved atomically (use \`FileManager.moveItem\` or copy-then-delete for cross-device moves)
+          - Progress is shown during transfer
+          - The manifest file is human-readable (JSON or plain text)" \
+            --label "storage,enhancement"
+
+      - name: Issue - Storage Visualization
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "[Storage] Storage usage visualization" \
+            --milestone "${{ steps.milestone.outputs.milestone_number }}" \
+            --body "## Goal
+
+          Provide a clear visual breakdown of disk usage so the user understands where space is being consumed before cleaning.
+
+          ## Features
+
+          - Overall disk usage bar (used vs. free)
+          - Breakdown by category (Junk, Orphaned, Packages, Caches, User Data)
+          - Sortable list of largest items found by the scanner
+          - Treemap or pie chart view showing top space consumers
+
+          ## Implementation
+
+          - Use SwiftUI \`Charts\` framework (available on macOS 13+)
+          - Disk info: \`FileManager.default.volumeAvailableCapacityForImportantUsage\`
+          - Keep visualization reactive to scan progress (update as items are discovered)
+
+          ## Acceptance Criteria
+
+          - UI updates in real time as the scanner reports results
+          - Tapping a chart segment filters the results list to that category
+          - Visualization correctly reflects actual disk usage within ±5% margin" \
+            --label "storage,enhancement,ui"
+
+      - name: Issue - Safe Deletion with Preview
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "[Storage] Safe deletion workflow with preview and confirmation" \
+            --milestone "${{ steps.milestone.outputs.milestone_number }}" \
+            --body "## Goal
+
+          Ensure users can review exactly what will be deleted and confirm before any file is removed from the system.
+
+          ## Features
+
+          - Preview panel: list all selected items with path, size, and reason for flagging
+          - Total space to be reclaimed displayed prominently
+          - Move to Trash by default; permanent delete as a secondary option with additional confirmation
+          - Undo support: restore from Trash if user regrets within the session
+          - System-critical file protection: maintain a blocklist of paths that must never be deleted (e.g., \`/System\`, \`/usr\`, \`~/Library/Keychains\`)
+
+          ## Acceptance Criteria
+
+          - No file is deleted without explicit user confirmation
+          - Deletion moves files to Trash via \`NSWorkspace.recycleURLs\` (or direct \`FileManager.trashItem\`)
+          - Blocklist prevents accidental deletion of protected paths even if scanner logic has a bug" \
+            --label "storage,enhancement"
+
+      - name: Issue - Background Scanning and Scheduling
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "[Storage] Background scanning and scheduled cleanup reminders" \
+            --milestone "${{ steps.milestone.outputs.milestone_number }}" \
+            --body "## Goal
+
+          Allow the storage scanner to run periodically in the background and notify the user when significant junk accumulates.
+
+          ## Features
+
+          - Background task using \`BGTaskScheduler\` or a Launch Agent (\`launchd\` plist) for periodic scans
+          - User-configurable scan frequency (daily, weekly, monthly)
+          - System notification when X GB of junk is detected (user-defined threshold)
+          - Scan only runs when the system is idle and on AC power to minimize impact
+
+          ## Acceptance Criteria
+
+          - Background scan completes without causing noticeable UI lag
+          - Notification is delivered even when the app is not in the foreground
+          - User can disable background scanning from the app preferences" \
+            --label "storage,enhancement"
+
+      # ─── Other Module Issues ────────────────────────────────────────────────
+
+      - name: Issue - Memory Optimization Module
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "[Memory] Intelligent memory optimization module" \
+            --body "## Goal
+
+          Build a module that monitors RAM usage and identifies opportunities to free memory, with adaptive behavior based on usage patterns.
+
+          ## Features
+
+          ### Monitoring
+          - Real-time memory pressure visualization (free, active, inactive, wired, compressed)
+          - Per-process memory breakdown using \`task_info\` / \`proc_info\` APIs
+          - Historical memory usage chart to identify trends and peak consumption periods
+
+          ### Intelligent Analysis
+          - Track which apps consistently consume large amounts of RAM
+          - Use usage frequency data to learn which background processes are rarely active but hold memory
+          - Flag apps that exhibit memory leaks (memory usage grows over time without plateau)
+
+          ### Actions
+          - Purge inactive memory pages (equivalent to \`sudo purge\`) with user confirmation
+          - Suggest apps to quit based on RAM consumption vs. recent usage frequency
+          - Optionally quit or relaunch memory-leaking apps
+
+          ## Acceptance Criteria
+
+          - Memory stats update at most every 5 seconds to avoid excessive polling
+          - Suggestions are ranked by potential memory reclaim, not arbitrary order
+          - Module does not free memory in ways that could corrupt running processes" \
+            --label "memory,enhancement"
+
+      - name: Issue - CPU Optimization Module
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "[CPU] Intelligent CPU and performance optimization module" \
+            --body "## Goal
+
+          Provide visibility into CPU usage and help the user reduce unnecessary CPU consumption from background processes.
+
+          ## Features
+
+          ### Monitoring
+          - Real-time per-process CPU usage (using \`libproc\` / \`sysctl\` APIs)
+          - CPU temperature and thermal throttling status via \`SMCKit\` or \`powermetrics\`
+          - Fan speed and power draw indicators (where hardware permits)
+          - Historical CPU load chart
+
+          ### Intelligent Analysis
+          - Detect CPU-heavy processes that run in the background with no visible user benefit
+          - Identify login items and launch agents consuming CPU without user interaction
+          - Learn typical CPU baselines per app; flag anomalies (e.g., an app suddenly using 300% CPU)
+          - Correlate high CPU with battery drain on MacBooks
+
+          ### Actions
+          - Suggest or terminate runaway processes with user confirmation
+          - Disable unnecessary login items and startup agents
+          - Display estimated impact on battery life or thermal performance
+
+          ## Acceptance Criteria
+
+          - CPU data refreshes every 2 seconds maximum to avoid self-referential load
+          - Anomaly detection has fewer than 5% false positives in a one-week test period
+          - No process is killed without explicit user approval" \
+            --label "cpu,performance,enhancement"
+
+      - name: Issue - Intelligent Deletion Module
+        if: steps.check.outputs.issue_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "[Deletion] Intelligent deletion module with safety guarantees" \
+            --body "## Goal
+
+          Create a cross-module deletion engine that handles all file removal operations consistently, safely, and with full audit capability.
+
+          ## Features
+
+          ### Core Engine
+          - Centralized deletion service used by all other modules (Storage, Memory caches, CPU-related temp files)
+          - Support for soft delete (Trash), hard delete (permanent), and move-to-archive
+          - Batch deletion with atomic commit: either all succeed or none are deleted
+
+          ### Safety
+          - Protected path registry: immutable blocklist of system-critical paths
+          - Pre-deletion checksum for files flagged as potentially important
+          - Deletion log stored locally so the user can audit what was removed and when
+
+          ### Intelligence
+          - Learn from user feedback: if a user frequently restores a certain file type from Trash, lower its classification score
+          - Suggest optimal deletion time (off-peak hours, when system is idle)
+          - Integrate with Time Machine: warn if a file has never been backed up before permanent deletion
+
+          ## Acceptance Criteria
+
+          - Deletion log is persisted across app launches
+          - Blocklist cannot be modified at runtime without explicit user override
+          - Integration tests cover at least: safe delete, blocked path rejection, batch rollback on partial failure" \
+            --label "deletion,enhancement"
