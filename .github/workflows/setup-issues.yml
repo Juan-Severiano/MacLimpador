@@ -23,6 +23,8 @@ jobs:
           COUNT=$(gh issue list --repo ${{ github.repository }} --state all --limit 1 --json number | jq length)
           echo "issue_count=$COUNT" >> "$GITHUB_OUTPUT"
 
+      # Idempotent: --force updates color and description if the label already
+      # exists, so re-runs never fail with "already_exists" 422 errors.
       - name: Create labels
         if: steps.check.outputs.issue_count == '0'
         env:
@@ -44,26 +46,41 @@ jobs:
             REST="${ENTRY#*:}"
             COLOR="${REST%%:*}"
             DESC="${REST#*:}"
-            gh api repos/${{ github.repository }}/labels \
-              -X POST \
-              -f name="$NAME" \
-              -f color="$COLOR" \
-              -f description="$DESC" 2>/dev/null || true
+            gh label create "$NAME" \
+              --repo "${{ github.repository }}" \
+              --color "$COLOR" \
+              --description "$DESC" \
+              --force
           done
 
+      # Idempotent: look up the milestone by title first. If it already
+      # exists we reuse it; only create when it is genuinely missing.
+      # We store the milestone *title* for `gh issue create --milestone`
+      # which expects a name, not a number.
       - name: Create Milestone - Storage Optimization
         if: steps.check.outputs.issue_count == '0'
         id: milestone
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          RESPONSE=$(gh api repos/${{ github.repository }}/milestones \
-            -X POST \
-            -f title="Milestone 1: Storage Optimization" \
-            -f description="First major module: intelligent storage analysis and cleanup. Covers junk detection, orphaned files, Homebrew package management, file relocation, and storage visualization." \
-            -f state="open")
-          MILESTONE_NUMBER=$(echo "$RESPONSE" | jq '.number')
+          MILESTONE_TITLE="Milestone 1: Storage Optimization"
+
+          # Search for an existing milestone with this title
+          MILESTONE_NUMBER=$(gh api "repos/${{ github.repository }}/milestones" \
+            --jq ".[] | select(.title == \"$MILESTONE_TITLE\") | .number" 2>/dev/null || true)
+
+          if [ -z "$MILESTONE_NUMBER" ]; then
+            # Milestone does not exist yet — create it
+            MILESTONE_NUMBER=$(gh api "repos/${{ github.repository }}/milestones" \
+              -X POST \
+              -f title="$MILESTONE_TITLE" \
+              -f description="First major module: intelligent storage analysis and cleanup. Covers junk detection, orphaned files, Homebrew package management, file relocation, and storage visualization." \
+              -f state="open" \
+              --jq '.number')
+          fi
+
           echo "milestone_number=$MILESTONE_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "milestone_title=$MILESTONE_TITLE" >> "$GITHUB_OUTPUT"
 
       # ─── Documentation Issues ──────────────────────────────────────────────
 
@@ -211,7 +228,7 @@ jobs:
           gh issue create \
             --repo ${{ github.repository }} \
             --title "[Storage] Module architecture and scanning pipeline" \
-            --milestone "${{ steps.milestone.outputs.milestone_number }}" \
+            --milestone "${{ steps.milestone.outputs.milestone_title }}" \
             --body "## Goal
 
           Define and implement the foundational architecture for the Storage Optimization module.
@@ -239,7 +256,7 @@ jobs:
           gh issue create \
             --repo ${{ github.repository }} \
             --title "[Storage] Intelligent junk file detection using usage patterns" \
-            --milestone "${{ steps.milestone.outputs.milestone_number }}" \
+            --milestone "${{ steps.milestone.outputs.milestone_title }}" \
             --body "## Goal
 
           Build a module that learns over time which files are likely junk based on usage patterns and file metadata.
@@ -277,7 +294,7 @@ jobs:
           gh issue create \
             --repo ${{ github.repository }} \
             --title "[Storage] Detect orphaned files from uninstalled applications" \
-            --milestone "${{ steps.milestone.outputs.milestone_number }}" \
+            --milestone "${{ steps.milestone.outputs.milestone_title }}" \
             --body "## Goal
 
           Identify files left behind by applications that are no longer installed on the system.
@@ -313,7 +330,7 @@ jobs:
           gh issue create \
             --repo ${{ github.repository }} \
             --title "[Storage] Homebrew package analysis and cleanup" \
-            --milestone "${{ steps.milestone.outputs.milestone_number }}" \
+            --milestone "${{ steps.milestone.outputs.milestone_title }}" \
             --body "## Goal
 
           Integrate with Homebrew to list installed packages, identify large or unused ones, and provide cleanup options.
@@ -349,7 +366,7 @@ jobs:
           gh issue create \
             --repo ${{ github.repository }} \
             --title "[Storage] Move files to an external or secondary location" \
-            --milestone "${{ steps.milestone.outputs.milestone_number }}" \
+            --milestone "${{ steps.milestone.outputs.milestone_title }}" \
             --body "## Goal
 
           Allow the user to move identified files or folders to a different location (e.g., external drive, NAS, or a designated archive folder) instead of deleting them.
@@ -377,7 +394,7 @@ jobs:
           gh issue create \
             --repo ${{ github.repository }} \
             --title "[Storage] Storage usage visualization" \
-            --milestone "${{ steps.milestone.outputs.milestone_number }}" \
+            --milestone "${{ steps.milestone.outputs.milestone_title }}" \
             --body "## Goal
 
           Provide a clear visual breakdown of disk usage so the user understands where space is being consumed before cleaning.
@@ -410,7 +427,7 @@ jobs:
           gh issue create \
             --repo ${{ github.repository }} \
             --title "[Storage] Safe deletion workflow with preview and confirmation" \
-            --milestone "${{ steps.milestone.outputs.milestone_number }}" \
+            --milestone "${{ steps.milestone.outputs.milestone_title }}" \
             --body "## Goal
 
           Ensure users can review exactly what will be deleted and confirm before any file is removed from the system.
@@ -438,7 +455,7 @@ jobs:
           gh issue create \
             --repo ${{ github.repository }} \
             --title "[Storage] Background scanning and scheduled cleanup reminders" \
-            --milestone "${{ steps.milestone.outputs.milestone_number }}" \
+            --milestone "${{ steps.milestone.outputs.milestone_title }}" \
             --body "## Goal
 
           Allow the storage scanner to run periodically in the background and notify the user when significant junk accumulates.
