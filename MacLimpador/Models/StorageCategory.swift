@@ -27,14 +27,14 @@ enum StorageCategory: String, CaseIterable, Codable, Identifiable {
 
     var iconName: String {
         switch self {
-        case .junk: return "trash"
-        case .orphaned: return "app.badge.questionmark"
-        case .package: return "shippingbox"
-        case .cache: return "internaldrive"
-        case .log: return "doc.text"
-        case .duplicate: return "doc.on.doc"
-        case .temporary: return "clock"
-        case .largeFile: return "arrow.up.circle"
+        case .junk: return "trash.fill"
+        case .orphaned: return "questionmark.folder.fill"
+        case .package: return "shippingbox.fill"
+        case .cache: return "internaldrive.fill"
+        case .log: return "doc.text.fill"
+        case .duplicate: return "doc.on.doc.fill"
+        case .temporary: return "clock.fill"
+        case .largeFile: return "arrow.up.circle.fill"
         }
     }
 }

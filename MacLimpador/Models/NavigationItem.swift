@@ -35,7 +35,7 @@ enum NavigationItem: Hashable, Identifiable, CaseIterable {
         case .storage: return "externaldrive.fill"
         case .memory: return "memorychip.fill"
         case .cpu: return "cpu.fill"
-        case .uninstaller: return "app.badge.minus"
+        case .uninstaller: return "x.circle.fill"
         }
     }
     
