@@ -2,8 +2,9 @@ import Foundation
 
 enum NavigationItem: Hashable, Identifiable, CaseIterable {
     case dashboard
-    case systemCleanup
-    case largeFiles
+    case storage
+    case memory
+    case cpu
     case uninstaller
     
     var id: Self { self }
@@ -11,18 +12,40 @@ enum NavigationItem: Hashable, Identifiable, CaseIterable {
     var title: String {
         switch self {
         case .dashboard: return "Dashboard"
-        case .systemCleanup: return "Limpeza do Sistema"
-        case .largeFiles: return "Arquivos Grandes"
-        case .uninstaller: return "Desinstalador"
+        case .storage: return "Armazenamento"
+        case .memory: return "Memória"
+        case .cpu: return "CPU"
+        case .uninstaller: return "Desinstalar Apps"
+        }
+    }
+    
+    var subtitle: String {
+        switch self {
+        case .dashboard: return "Visão geral do sistema"
+        case .storage: return "Limpe arquivos e libere espaço"
+        case .memory: return "Otimize a memória RAM"
+        case .cpu: return "Performance do processador"
+        case .uninstaller: return "Remova aplicativos"
         }
     }
     
     var iconName: String {
         switch self {
-        case .dashboard: return "speedometer"
-        case .systemCleanup: return "trash"
-        case .largeFiles: return "doc.viewfinder"
-        case .uninstaller: return "minus.rectangle"
+        case .dashboard: return "gauge.with.dots.needle.bottom.50percent"
+        case .storage: return "externaldrive.fill"
+        case .memory: return "memorychip.fill"
+        case .cpu: return "cpu.fill"
+        case .uninstaller: return "app.badge.minus"
+        }
+    }
+    
+    var color: String {
+        switch self {
+        case .dashboard: return "blue"
+        case .storage: return "green"
+        case .memory: return "purple"
+        case .cpu: return "orange"
+        case .uninstaller: return "red"
         }
     }
 }

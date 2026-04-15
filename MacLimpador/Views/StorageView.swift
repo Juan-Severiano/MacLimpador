@@ -1,161 +1,198 @@
 import SwiftUI
-import Charts
-
-
 
 struct StorageView: View {
     @State private var viewModel = StorageViewModel()
-    @State private var selectedItems = Set<ScanResult>()
-    @State private var showDeleteConfirmation = false
-    @State private var showRelocation = false
+    @State private var currentPath: String = "/"
+    @State private var viewMode: FileViewMode = .list
+    @State private var isScanning: Bool = false
     
     var body: some View {
-        NavigationSplitView {
-            categorySidebar
-        } detail: {
-            resultsList
-        }
-        .navigationTitle("Storage")
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button(action: { Task { await viewModel.startScan() } }) {
-                    Label("Scan", systemImage: "magnifyingglass")
-                }
-                .disabled(viewModel.isScanning)
+        VStack(spacing: 0) {
+            StorageToolbar(viewModel: viewModel, viewMode: $viewMode, isScanning: $isScanning)
+            
+            HSplitView {
+                categorySidebar
+                    .frame(minWidth: 200, maxWidth: 280)
+                
+                fileContentView
             }
         }
-        .sheet(isPresented: $showDeleteConfirmation) {
-            deleteConfirmationSheet
-        }
-        .sheet(isPresented: $showRelocation) {
-            relocationSheet
+        .navigationTitle("Armazenamento")
+        .task {
+            await startScan()
         }
     }
     
     private var categorySidebar: some View {
         List {
-            Section("Categories") {
+            Section("Categorias") {
                 ForEach(viewModel.categorySummary) { item in
-                    CategoryRow(summary: item)
+                    SidebarCategoryRow(summary: item)
                 }
             }
             
-            Section("Total") {
+            Section {
                 HStack {
-                    Text("Space Found")
+                    Text("Total")
+                        .fontWeight(.medium)
                     Spacer()
                     Text(viewModel.formattedTotalSize)
                         .fontWeight(.semibold)
                 }
+                .padding(.vertical, 4)
             }
         }
         .listStyle(.sidebar)
-        .frame(minWidth: 200)
     }
     
-    private var resultsList: some View {
-        List {
-            if viewModel.isScanning {
-                ProgressView(viewModel.scanProgress)
-                    .frame(maxWidth: .infinity, alignment: .center)
+    private var fileContentView: some View {
+        Group {
+            if isScanning {
+                scanningView
             } else if viewModel.filteredResults.isEmpty {
-                ContentUnavailableView(
-                    "No Items Found",
-                    systemImage: "externaldrive.badge.questionmark",
-                    description: Text("Run a scan to find cleanup candidates")
-                )
+                emptyView
             } else {
-                ForEach(viewModel.filteredResults) { result in
-                    ScanResultRow(result: result)
+                if viewMode == .grid {
+                    gridView
+                } else {
+                    listView
                 }
             }
         }
-        .listStyle(.inset)
     }
     
-    private var deleteConfirmationSheet: some View {
+    private var scanningView: some View {
         VStack(spacing: 20) {
-            Image(systemName: "trash")
+            ProgressView()
+                .scaleEffect(1.5)
+            
+            Text("Analisando arquivos...")
+                .font(.headline)
+            
+            Text(viewModel.scanProgress)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private var emptyView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "externaldrive.badge.questionmark")
                 .font(.system(size: 48))
-                .foregroundStyle(.red)
-            
-            Text("Delete \(selectedItems.count) Items?")
-                .font(.title2)
-                .fontWeight(.semibold)
-            
-            Text("This will free up \(calculateSelectedSize())")
                 .foregroundStyle(.secondary)
             
-            HStack {
-                Button("Cancel") {
-                    showDeleteConfirmation = false
-                }
-                .keyboardShortcut(.cancelAction)
-                
-                Button("Move to Trash") {
-                    Task {
-                        try? await viewModel.deleteItems(Array(selectedItems))
-                        selectedItems.removeAll()
-                        showDeleteConfirmation = false
-                    }
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(40)
-        .frame(width: 320, height: 220)
-    }
-    
-    private var relocationSheet: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "externaldrive")
-                .font(.system(size: 48))
-                .foregroundStyle(.blue)
+            Text("Nenhum arquivo encontrado")
+                .font(.headline)
             
-            Text("Move to External Drive")
-                .font(.title2)
-                .fontWeight(.semibold)
-            
-            Text("Select a destination to move selected files")
+            Text("Clique em 'Escanear' para encontrar arquivos")
+                .font(.caption)
                 .foregroundStyle(.secondary)
             
-            Button("Choose Location...") {
-                // File relocation logic
+            Button(action: { Task { await startScan() } }) {
+                Label("Escanear Agora", systemImage: "magnifyingglass")
             }
+            .buttonStyle(.borderedProminent)
         }
-        .padding(40)
-        .frame(width: 320, height: 220)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
-    private func calculateSelectedSize() -> String {
-        let size = selectedItems.reduce(0) { $0 + $1.size }
-        return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
+    private var listView: some View {
+        List(viewModel.filteredResults) { item in
+            FileListRow(result: item)
+        }
+    }
+    
+    private var gridView: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 16) {
+            ForEach(viewModel.filteredResults) { item in
+                FileGridItem(result: item)
+            }
+        }
+        .padding()
+    }
+    
+    private func startScan() async {
+        isScanning = true
+        await viewModel.startScan()
+        isScanning = false
     }
 }
 
-struct CategoryRow: View {
+enum FileViewMode: String, CaseIterable {
+    case list = "Lista"
+    case grid = "Grade"
+}
+
+struct StorageToolbar: View {
+    @Bindable var viewModel: StorageViewModel
+    @Binding var viewMode: FileViewMode
+    @Binding var isScanning: Bool
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            Button(action: { Task { await viewModel.startScan() } }) {
+                Label("Escanear", systemImage: "magnifyingglass")
+            }
+            .disabled(isScanning)
+            
+            Picker("Visualização", selection: $viewMode) {
+                ForEach(FileViewMode.allCases, id: \.self) { mode in
+                    Text(mode.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 120)
+            
+            Spacer()
+            
+            if !viewModel.filteredResults.isEmpty {
+                Text("\(viewModel.filteredResults.count) itens")
+                    .foregroundStyle(.secondary)
+            }
+            
+            Button(action: {}) {
+                Label("Mover", systemImage: "externaldrive")
+            }
+            .disabled(viewModel.filteredResults.isEmpty)
+            
+            Button(action: {}) {
+                Label("Deletar", systemImage: "trash")
+            }
+            .disabled(viewModel.filteredResults.isEmpty)
+            .foregroundStyle(.red)
+        }
+        .padding()
+    }
+}
+
+struct SidebarCategoryRow: View {
     let summary: StorageViewModel.CategorySummaryItem
     
     var body: some View {
-        HStack {
+        HStack(spacing: 12) {
             Image(systemName: summary.category.iconName)
-                .foregroundStyle(categoryColor)
+                .foregroundStyle(color)
+                .frame(width: 24)
             
-            VStack(alignment: .leading) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(summary.category.rawValue)
-                Text("\(summary.count) items")
-                    .font(.caption)
+                    .font(.subheadline)
+                
+                Text("\(summary.count) itens")
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
             }
             
             Spacer()
             
             Text(summary.formattedSize)
+                .font(.subheadline)
                 .fontWeight(.medium)
         }
     }
     
-    private var categoryColor: Color {
+    private var color: Color {
         switch summary.category {
         case .junk: return .red
         case .orphaned: return .orange
@@ -169,16 +206,19 @@ struct CategoryRow: View {
     }
 }
 
-struct ScanResultRow: View {
+struct FileListRow: View {
     let result: ScanResult
     
     var body: some View {
-        HStack {
+        HStack(spacing: 12) {
             Image(systemName: result.category.iconName)
                 .foregroundStyle(iconColor)
+                .frame(width: 32)
             
-            VStack(alignment: .leading) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(result.name)
+                    .lineLimit(1)
+                
                 Text(result.path)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -187,14 +227,59 @@ struct ScanResultRow: View {
             
             Spacer()
             
-            VStack(alignment: .trailing) {
+            VStack(alignment: .trailing, spacing: 4) {
                 Text(result.formattedSize)
-                    .fontWeight(.medium)
+                    .font(.system(.body, design: .monospaced))
                 
-                Text(result.confidencePercentage)
-                    .font(.caption)
-                    .foregroundStyle(confidenceColor)
+                ConfidenceView(confidence: result.confidence)
             }
+        }
+        .padding(.vertical, 4)
+    }
+    
+    private var iconColor: Color {
+        switch result.category {
+        case .junk: return .red
+        case .orphaned: return .orange
+        case .package: return .blue
+        case .cache: return .purple
+        case .log: return .gray
+        case .duplicate: return .yellow
+        case .temporary: return .cyan
+        case .largeFile: return .green
+        }
+    }
+}
+
+struct FileGridItem: View {
+    let result: ScanResult
+    @State private var isHovered = false
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: result.category.iconName)
+                .font(.title)
+                .foregroundStyle(iconColor)
+            
+            Text(result.name)
+                .font(.caption)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+            
+            Text(result.formattedSize)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(width: 100, height: 100)
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(isHovered ? Color.secondary.opacity(0.15) : Color.secondary.opacity(0.05))
+        )
+        .scaleEffect(isHovered ? 1.05 : 1.0)
+        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .onHover { hovering in
+            isHovered = hovering
         }
     }
     
@@ -210,10 +295,25 @@ struct ScanResultRow: View {
         case .largeFile: return .green
         }
     }
+}
+
+struct ConfidenceView: View {
+    let confidence: Double
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(confidenceColor)
+                .frame(width: 8, height: 8)
+            
+            Text("\(Int(confidence * 100))%")
+                .font(.caption)
+        }
+    }
     
     private var confidenceColor: Color {
-        if result.confidence > 0.7 { return .green }
-        if result.confidence > 0.4 { return .orange }
+        if confidence > 0.7 { return .green }
+        if confidence > 0.4 { return .orange }
         return .red
     }
 }
