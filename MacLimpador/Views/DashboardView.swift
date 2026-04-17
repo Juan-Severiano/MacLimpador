@@ -1,138 +1,300 @@
 import SwiftUI
+import Charts
 
 struct DashboardView: View {
     @State private var statsProvider = SystemStatsProvider.shared
     
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 30) {
-                // Header com Info Real do Mac
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text("Saúde do Mac: ")
-                            .font(.largeTitle)
-                            .bold() +
-                        Text("Excelente")
-                            .font(.largeTitle)
-                            .bold()
-                            .foregroundColor(.blue)
-                        
-                        Text("\(statsProvider.currentStats.modelName) • \(statsProvider.currentStats.cpuName)")
-                            .font(.title3)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Image(systemName: "laptopcomputer")
-                        .font(.system(size: 80))
-                        .padding()
-                        .background(
-                            Circle()
-                                .fill(LinearGradient(colors: [.blue.opacity(0.2), .purple.opacity(0.1)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                        )
-                }
-                .padding(.horizontal)
+            VStack(spacing: 32) {
+                headerSection
                 
-                // Grid de Status Principal
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 20), GridItem(.flexible(), spacing: 20)], spacing: 20) {
-                    DashboardStatCard(title: "Armazenamento", 
-                                     value: statsProvider.currentStats.formattedDiskAvailable, 
-                                     detail: "de \(statsProvider.currentStats.formattedDiskTotal)", 
-                                     icon: "internaldrive", 
-                                     color: .blue)
-                    
-                    DashboardStatCard(title: "Memória RAM", 
-                                     value: "\(Int(statsProvider.currentStats.ramPressure))%", 
-                                     detail: "Pressão do Sistema", 
-                                     icon: "memorychip", 
-                                     color: .purple)
-                    
-                    DashboardStatCard(title: "Bateria", 
-                                     value: "\(statsProvider.currentStats.batteryPercentage)%", 
-                                     detail: statsProvider.currentStats.isBatteryCharging ? "Carregando" : "No Ar", 
-                                     icon: "battery.100", 
-                                     color: .green)
-                    
-                    DashboardStatCard(title: "CPU", 
-                                     value: "\(Int(statsProvider.currentStats.cpuUsage))%", 
-                                     detail: "Carga Atual", 
-                                     icon: "cpu", 
-                                     color: .orange)
-                }
-                .padding(.horizontal)
+                healthCardsSection
                 
-                // Seção "Buscando por lixo" estilizada
-                VStack(alignment: .leading, spacing: 15) {
-                    Text("Ações Recomendadas")
-                        .font(.headline)
-                        .padding(.leading)
-                    
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text("Limpeza Inteligente")
-                                .font(.title2)
-                                .bold()
-                            Text("Encontramos caches e arquivos antigos que podem ser removidos.")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        Button("Escanear") {
-                            // Navegar para limpeza
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                    }
-                    .padding(25)
-                    .background(
-                        RoundedRectangle(cornerRadius: 25)
-                            .fill(Color(NSColor.controlBackgroundColor))
-                            .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 5)
-                    )
-                    .padding(.horizontal)
-                }
+                quickActionsSection
+                
+                modulesSection
             }
-            .padding(.vertical)
+            .padding(24)
+        }
+    }
+    
+    private var headerSection: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Olá!")
+                    .font(.system(size: 36, weight: .bold))
+                
+                Text("Seu Mac está em \(healthStatus)")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                
+                Text(statsProvider.currentStats.modelName)
+                    .font(.subheadline)
+                    .foregroundStyle(.tertiary)
+            }
+            
+            Spacer()
+            
+            ZStack {
+                Circle()
+                    .fill(healthGradient)
+                    .frame(width: 100, height: 100)
+                
+                Image(systemName: "laptopcomputer")
+                    .font(.system(size: 40))
+                    .foregroundStyle(.white)
+            }
+        }
+    }
+    
+    private var healthStatus: String {
+        let score = calculateHealthScore()
+        if score > 80 { return "ótimas condições" }
+        if score > 60 { return "boas condições" }
+        if score > 40 { return "condições regulares" }
+        return "precisa de atenção"
+    }
+    
+    private var healthGradient: LinearGradient {
+        let score = calculateHealthScore()
+        if score > 80 {
+            return LinearGradient(colors: [.green, .green.opacity(0.7)], startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
+        if score > 60 {
+            return LinearGradient(colors: [.blue, .blue.opacity(0.7)], startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
+        if score > 40 {
+            return LinearGradient(colors: [.orange, .orange.opacity(0.7)], startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
+        return LinearGradient(colors: [.red, .red.opacity(0.7)], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    
+    private func calculateHealthScore() -> Int {
+        var score = 100
+        if statsProvider.currentStats.diskAvailable < 50_000_000_000 { score -= 30 }
+        if statsProvider.currentStats.ramPressure > 80 { score -= 30 }
+        return max(0, score)
+    }
+    
+    private var healthCardsSection: some View {
+        HStack(spacing: 16) {
+            HealthCard(
+                title: "Armazenamento",
+                value: statsProvider.currentStats.formattedDiskAvailable,
+                subtitle: "livre de \(statsProvider.currentStats.formattedDiskTotal)",
+                icon: "internaldrive.fill",
+                color: storageColor,
+                progress: storageProgress
+            )
+            
+            HealthCard(
+                title: "Memória RAM",
+                value: "\(Int(statsProvider.currentStats.ramPressure))%",
+                subtitle: "em uso",
+                icon: "memorychip.fill",
+                color: .purple,
+                progress: statsProvider.currentStats.ramPressure / 100
+            )
+            
+            HealthCard(
+                title: "Bateria",
+                value: "\(statsProvider.currentStats.batteryPercentage)%",
+                subtitle: statsProvider.currentStats.isBatteryCharging ? "carregando" : "restante",
+                icon: "battery.100",
+                color: .green,
+                progress: Double(statsProvider.currentStats.batteryPercentage) / 100
+            )
+        }
+    }
+    
+    private var storageColor: Color {
+        let free = statsProvider.currentStats.diskAvailable
+        let total = statsProvider.currentStats.diskTotal
+        let usedPercent = Double(total - free) / Double(total)
+        
+        if usedPercent > 0.9 { return .red }
+        if usedPercent > 0.75 { return .orange }
+        return .green
+    }
+    
+    private var storageProgress: Double {
+        let free = statsProvider.currentStats.diskAvailable
+        let total = statsProvider.currentStats.diskTotal
+        return Double(total - free) / Double(total)
+    }
+    
+    private var quickActionsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Ações Rápidas")
+                .font(.headline)
+            
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                QuickActionButton(title: "Limpar Lixo", icon: "trash.fill", color: .red)
+                QuickActionButton(title: "Cache Sistema", icon: "archivebox.fill", color: .orange)
+                QuickActionButton(title: "Duplicados", icon: "doc.on.doc.fill", color: .blue)
+                QuickActionButton(title: "Apps Antigos", icon: "app.badge.fill", color: .purple)
+                QuickActionButton(title: "Logs", icon: "doc.text.fill", color: .gray)
+                QuickActionButton(title: "Scan Total", icon: "magnifyingglass", color: .green)
+            }
+        }
+    }
+    
+    private var modulesSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Explorar")
+                .font(.headline)
+            
+            LazyVGrid(columns: [GridItem(.flexible())], spacing: 12) {
+                ModuleCard(item: .storage)
+                ModuleCard(item: .memory)
+                ModuleCard(item: .cpu)
+                ModuleCard(item: .uninstaller)
+            }
         }
     }
 }
 
-struct DashboardStatCard: View {
+struct HealthCard: View {
     let title: String
     let value: String
-    let detail: String
+    let subtitle: String
     let icon: String
     let color: Color
+    let progress: Double
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: icon)
-                    .font(.title2)
-                    .foregroundColor(color)
+                    .font(.title3)
+                    .foregroundStyle(color)
+                
                 Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+                
+                Text("\(Int(progress * 100))%")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                Text(value)
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.secondary.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(color)
+                .frame(height: 3)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .opacity(0.3)
+        )
+    }
+}
+
+struct QuickActionButton: View {
+    let title: String
+    let icon: String
+    let color: Color
+    @State private var isHovered = false
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundStyle(color)
             
             Text(title)
                 .font(.caption)
-                .bold()
-                .foregroundColor(.secondary)
-                .textCase(.uppercase)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(value)
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                Text(detail)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
+                .fontWeight(.medium)
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(20)
-        .shadow(color: .black.opacity(0.03), radius: 5, x: 0, y: 2)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(color.opacity(isHovered ? 0.2 : 0.1))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(color.opacity(isHovered ? 0.5 : 0), lineWidth: 2)
+        )
+        .scaleEffect(isHovered ? 1.03 : 1)
+        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+}
+
+struct ModuleCard: View {
+    let item: NavigationItem
+    @State private var isHovered = false
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(moduleColor.opacity(0.15))
+                    .frame(width: 56, height: 56)
+                
+                Image(systemName: item.iconName)
+                    .font(.title2)
+                    .foregroundStyle(moduleColor)
+            }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.title)
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                
+                Text(item.subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Spacer()
+            
+            Image(systemName: "chevron.right")
+                .foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(isHovered ? Color.secondary.opacity(0.1) : Color.secondary.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(moduleColor.opacity(isHovered ? 0.3 : 0), lineWidth: 2)
+        )
+        .scaleEffect(isHovered ? 1.01 : 1)
+        .animation(.easeInOut(duration: 0.2), value: isHovered)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+    
+    private var moduleColor: Color {
+        switch item {
+        case .storage: return .green
+        case .memory: return .purple
+        case .cpu: return .orange
+        case .uninstaller: return .red
+        default: return .blue
+        }
     }
 }
