@@ -9,51 +9,184 @@ actor StorageScanner {
     
     private init() {}
     
-    func scan() async throws -> [ScanResult] {
-        guard !isScanning else { 
-            throw StorageScannerError.scanInProgress 
+    func scan() -> AsyncStream<[ScanResult]> {
+        AsyncStream { continuation in
+            let task = Task {
+                guard !isScanning else {
+                    continuation.finish()
+                    return
+                }
+                
+                isScanning = true
+                scanResults = []
+                
+                // 1. Scan por categorias de forma sequencial para não sobrecarregar
+                
+                // Pacotes
+                let packages = await scanPackages()
+                scanResults.append(contentsOf: packages)
+                continuation.yield(packages)
+                
+                // Órfãos
+                let orphans = await OrphanedFilesService.shared.scanForOrphanedFiles()
+                scanResults.append(contentsOf: orphans)
+                continuation.yield(orphans)
+                
+                // Arquivos Grandes
+                let largeFiles = await scanLargeFiles()
+                scanResults.append(contentsOf: largeFiles)
+                continuation.yield(largeFiles)
+                
+                // Junk (Lixo) - Geralmente o mais demorado
+                let junk = await scanJunkFiles()
+                var scoredJunk: [ScanResult] = []
+                for item in junk {
+                    if !isScanning { break }
+                    let (confidence, reason) = await JunkDetectionService.shared.analyzeFile(at: item.path)
+                    if confidence > 0.1 {
+                        let result = ScanResult(
+                            path: item.path,
+                            name: item.name,
+                            size: item.size,
+                            category: item.category,
+                            confidence: confidence,
+                            reason: reason,
+                            lastAccessed: item.lastAccessed,
+                            lastModified: item.lastModified,
+                            isDirectory: item.isDirectory
+                        )
+                        scoredJunk.append(result)
+                    }
+                }
+                scanResults.append(contentsOf: scoredJunk)
+                continuation.yield(scoredJunk)
+                
+                isScanning = false
+                continuation.finish()
+            }
+            
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
         }
-        
-        isScanning = true
-        scanResults = []
-        
-        defer { isScanning = false }
-        
-        async let junkResults = scanJunkFiles()
-        async let orphanResults = scanOrphanedFiles()
-        async let largeFilesResults = scanLargeFiles()
-        
-        let (junk, orphans, largeFiles) = await (junkResults, orphanResults, largeFilesResults)
-        
-        scanResults = junk + orphans + largeFiles
-        
-        return scanResults
     }
     
-    private func scanJunkFiles() async -> [ScanResult] {
+    private func scanPackages() async -> [ScanResult] {
         var results: [ScanResult] = []
         
-        let tempPaths = [
-            NSTemporaryDirectory(),
-            NSHomeDirectory() + "/Library/Caches",
-            NSHomeDirectory() + "/Library/Logs"
-        ]
+        // 1. Homebrew packages
+        let brewResults = await HomebrewService.shared.getPackagesAsScanResults()
+        results.append(contentsOf: brewResults)
         
-        for basePath in tempPaths {
-            results.append(contentsOf: scanDirectory(at: basePath, category: .junk))
+        // 2. Common binary locations
+        let binPaths = ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin"]
+        let fileManager = FileManager.default
+        
+        for basePath in binPaths {
+            guard let contents = try? fileManager.contentsOfDirectory(atPath: basePath) else { continue }
+            
+            for item in contents {
+                let path = (basePath as NSString).appendingPathComponent(item)
+                
+                // Skip symbolic links (most are links to the actual binary elsewhere, brew does this)
+                // But we want to see the "real" ones or those that aren't links
+                do {
+                    let attributes = try fileManager.attributesOfItem(atPath: path)
+                    if let type = attributes[.type] as? FileAttributeType, type == .typeSymbolicLink {
+                        continue
+                    }
+                    
+                    let size = (attributes[.size] as? Int64) ?? 0
+                    if size > 1_000_000 { // Only care about binaries > 1MB
+                        results.append(ScanResult(
+                            path: path,
+                            name: item,
+                            size: size,
+                            category: .package,
+                            confidence: 0.1,
+                            reason: "System binary or tool",
+                            isDirectory: false
+                        ))
+                    }
+                } catch { continue }
+            }
         }
         
         return results
     }
     
-    private func scanOrphanedFiles() async -> [ScanResult] {
+    private func scanJunkFiles() async -> [ScanResult] {
         var results: [ScanResult] = []
         
-        let applicationSupport = NSHomeDirectory() + "/Library/Application Support"
-        let caches = NSHomeDirectory() + "/Library/Caches"
+        let junkPaths = [
+            NSTemporaryDirectory(),
+            NSHomeDirectory() + "/Library/Caches",
+            NSHomeDirectory() + "/Library/Logs",
+            NSHomeDirectory() + "/Library/Developer/Xcode/DerivedData",
+            NSHomeDirectory() + "/Downloads",
+            "/Library/Caches",
+            "/Library/Logs"
+        ]
         
-        results.append(contentsOf: scanApplicationSupportDir(at: applicationSupport))
-        results.append(contentsOf: scanCachesDir(at: caches))
+        for basePath in junkPaths {
+            results.append(contentsOf: await scanDirectoryForJunk(at: basePath))
+        }
+        
+        return results
+    }
+    
+    private func scanDirectoryForJunk(at path: String) async -> [ScanResult] {
+        var results: [ScanResult] = []
+        
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: path) else { return results }
+        
+        let options: FileManager.DirectoryEnumerationOptions = [.skipsHiddenFiles, .skipsPackageDescendants]
+        
+        guard let enumerator = fileManager.enumerator(
+            at: URL(fileURLWithPath: path),
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .isDirectoryKey, .contentAccessDateKey],
+            options: options
+        ) else { return results }
+        
+        var count = 0
+        for case let fileURL as URL in enumerator {
+            if !isScanning { break }
+            
+            // Limit to 1000 items per base path to avoid massive scans in MVP
+            count += 1
+            if count > 1000 { break }
+            
+            do {
+                let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isDirectoryKey, .contentAccessDateKey])
+                
+                let isDir = resourceValues.isDirectory ?? false
+                if isDir {
+                    // Only include directories if they are specific junk types
+                    if !fileURL.path.contains("DerivedData") && !fileURL.path.contains("Caches") {
+                        continue
+                    }
+                }
+                
+                let fileSize = Int64(resourceValues.fileSize ?? 0)
+                // Small files are usually not worth cleaning individually unless confidence is high
+                if !isDir && fileSize < 100_000 { continue } 
+                
+                results.append(ScanResult(
+                    path: fileURL.path,
+                    name: fileURL.lastPathComponent,
+                    size: fileSize,
+                    category: .junk,
+                    confidence: 0.5,
+                    reason: "Analyzing...",
+                    lastAccessed: resourceValues.contentAccessDate,
+                    lastModified: resourceValues.contentModificationDate,
+                    isDirectory: isDir
+                ))
+            } catch {
+                continue
+            }
+        }
         
         return results
     }
@@ -62,247 +195,51 @@ actor StorageScanner {
         var results: [ScanResult] = []
         
         let homeDir = NSHomeDirectory()
-        let skipDirs = [".Trash", "Library", "Applications", "Documents", "Music", "Movies"]
+        let skipDirs = [".Trash", "Library", "Applications"]
         
-        if let enumerator = FileManager.default.enumerator(
+        guard let enumerator = FileManager.default.enumerator(
             at: URL(fileURLWithPath: homeDir),
             includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .isDirectoryKey],
             options: [.skipsHiddenFiles]
-        ) {
-            for case let fileURL as URL in enumerator {
-                let path = fileURL.path
-                if skipDirs.contains(where: { path.contains("/\($0)/") }) {
-                    continue
-                }
-                
-                do {
-                    let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isDirectoryKey])
-                    
-                    if let isDirectory = resourceValues.isDirectory, isDirectory {
-                        continue
-                    }
-                    
-                    if let fileSize = resourceValues.fileSize, fileSize > 100_000_000 {
-                        let name = fileURL.lastPathComponent
-                        let modDate = resourceValues.contentModificationDate
-                        
-                        results.append(ScanResult(
-                            path: path,
-                            name: name,
-                            size: Int64(fileSize),
-                            category: .largeFile,
-                            confidence: 0.5,
-                            reason: "Large file (>100MB)",
-                            lastModified: modDate,
-                            isDirectory: false
-                        ))
-                    }
-                } catch {
-                    continue
-                }
-            }
-        }
+        ) else { return [] }
         
-        return results.sorted { $0.size > $1.size }.prefix(100).map { $0 }
-    }
-    
-    private func scanDirectory(at path: String, category: StorageCategory) -> [ScanResult] {
-        var results: [ScanResult] = []
-        
-        let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: path) else { return results }
-        
-        guard let enumerator = fileManager.enumerator(
-            at: URL(fileURLWithPath: path),
-            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .isDirectoryKey, .contentAccessDateKey],
-            options: [.skipsHiddenFiles]
-        ) else { return results }
-        
+        var count = 0
         for case let fileURL as URL in enumerator {
+            if !isScanning { break }
+            count += 1
+            if count > 10000 { break } // Sanity limit
+            
+            let path = fileURL.path
+            if skipDirs.contains(where: { path.contains("/\($0)/") }) {
+                enumerator.skipDescendants()
+                continue
+            }
+            
             do {
-                let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isDirectoryKey, .contentAccessDateKey])
+                let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isDirectoryKey])
                 
-                if let isDir = resourceValues.isDirectory, isDir {
+                if let isDirectory = resourceValues.isDirectory, isDirectory {
                     continue
                 }
                 
-                guard let fileSize = resourceValues.fileSize, fileSize > 1_000_000 else {
-                    continue
+                if let fileSize = resourceValues.fileSize, fileSize > 100_000_000 {
+                    results.append(ScanResult(
+                        path: path,
+                        name: fileURL.lastPathComponent,
+                        size: Int64(fileSize),
+                        category: .largeFile,
+                        confidence: 0.5,
+                        reason: "Large file (>100MB)",
+                        lastModified: resourceValues.contentModificationDate,
+                        isDirectory: false
+                    ))
                 }
-                
-                let name = fileURL.lastPathComponent
-                let modDate = resourceValues.contentModificationDate
-                let accessDate = resourceValues.contentAccessDate
-                let daysSinceAccess = accessDate.map { Calendar.current.dateComponents([.day], from: $0, to: Date()).day ?? 0 } ?? 0
-                
-                let confidence: Double
-                let reason: String
-                
-                if daysSinceAccess > 90 {
-                    confidence = 0.9
-                    reason = "Not accessed in \(daysSinceAccess) days"
-                } else if daysSinceAccess > 30 {
-                    confidence = 0.5
-                    reason = "Not accessed in \(daysSinceAccess) days"
-                } else {
-                    confidence = 0.2
-                    reason = "Potential junk"
-                }
-                
-                results.append(ScanResult(
-                    path: fileURL.path,
-                    name: name,
-                    size: Int64(fileSize),
-                    category: category,
-                    confidence: confidence,
-                    reason: reason,
-                    lastAccessed: accessDate,
-                    lastModified: modDate,
-                    isDirectory: false
-                ))
             } catch {
                 continue
             }
         }
         
-        return results.sorted { $0.confidence > $1.confidence }
-    }
-    
-    private func scanApplicationSupportDir(at path: String) -> [ScanResult] {
-        var results: [ScanResult] = []
-        
-        let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: path) else { return results }
-        
-        let installedApps = getInstalledAppBundleIdentifiers()
-        
-        guard let contents = try? fileManager.contentsOfDirectory(atPath: path) else {
-            return results
-        }
-        
-        for item in contents {
-            let itemPath = (path as NSString).appendingPathComponent(item)
-            var isDirectory: ObjCBool = false
-            
-            guard fileManager.fileExists(atPath: itemPath, isDirectory: &isDirectory),
-                  isDirectory.boolValue else { continue }
-            
-            let bundleId = extractBundleIdentifier(from: itemPath)
-            
-            if let bundleId = bundleId, !installedApps.contains(bundleId) {
-                let size = calculateDirectorySize(at: itemPath)
-                
-                results.append(ScanResult(
-                    path: itemPath,
-                    name: item,
-                    size: size,
-                    category: .orphaned,
-                    confidence: 0.8,
-                    reason: "App '\(bundleId)' is not installed",
-                    isDirectory: true,
-                    bundleIdentifier: bundleId
-                ))
-            }
-        }
-        
-        return results
-    }
-    
-    private func scanCachesDir(at path: String) -> [ScanResult] {
-        var results: [ScanResult] = []
-        
-        let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: path) else { return results }
-        
-        let installedApps = getInstalledAppBundleIdentifiers()
-        
-        guard let contents = try? fileManager.contentsOfDirectory(atPath: path) else {
-            return results
-        }
-        
-        for item in contents {
-            let itemPath = (path as NSString).appendingPathComponent(item)
-            var isDirectory: ObjCBool = false
-            
-            guard fileManager.fileExists(atPath: itemPath, isDirectory: &isDirectory),
-                  isDirectory.boolValue else { continue }
-            
-            let bundleId = item.replacingOccurrences(of: ".plist", with: "")
-                .replacingOccurrences(of: ".", with: "")
-            
-            if !installedApps.contains(where: { $0.contains(bundleId) }) && !item.hasPrefix("com.apple") {
-                let size = calculateDirectorySize(at: itemPath)
-                
-                results.append(ScanResult(
-                    path: itemPath,
-                    name: item,
-                    size: size,
-                    category: .orphaned,
-                    confidence: 0.7,
-                    reason: "Cache for uninstalled app",
-                    isDirectory: true,
-                    bundleIdentifier: bundleId
-                ))
-            }
-        }
-        
-        return results
-    }
-    
-    private func getInstalledAppBundleIdentifiers() -> Set<String> {
-        var bundleIds = Set<String>()
-        
-        let appPaths = [
-            "/Applications",
-            NSHomeDirectory() + "/Applications"
-        ]
-        
-        let fileManager = FileManager.default
-        
-        for appPath in appPaths {
-            guard let contents = try? fileManager.contentsOfDirectory(atPath: appPath) else {
-                continue
-            }
-            
-            for item in contents where item.hasSuffix(".app") {
-                let appPath = (appPath as NSString).appendingPathComponent(item)
-                if let bundleId = extractBundleIdentifier(from: appPath) {
-                    bundleIds.insert(bundleId)
-                }
-            }
-        }
-        
-        return bundleIds
-    }
-    
-    private func extractBundleIdentifier(from appPath: String) -> String? {
-        let infoPlist = (appPath as NSString).appendingPathComponent("Contents/Info.plist")
-        
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: infoPlist)),
-              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              let bundleId = plist["CFBundleIdentifier"] as? String else {
-            return nil
-        }
-        
-        return bundleId
-    }
-    
-    private func calculateDirectorySize(at path: String) -> Int64 {
-        var totalSize: Int64 = 0
-        
-        let fileManager = FileManager.default
-        guard let enumerator = fileManager.enumerator(
-            at: URL(fileURLWithPath: path),
-            includingPropertiesForKeys: [.fileSizeKey]
-        ) else { return 0 }
-        
-        for case let fileURL as URL in enumerator {
-            if let fileSize = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
-                totalSize += Int64(fileSize ?? 0)
-            }
-        }
-        
-        return totalSize
+        return results.sorted { $0.size > $1.size }.prefix(50).map { $0 }
     }
     
     func cancelScan() {

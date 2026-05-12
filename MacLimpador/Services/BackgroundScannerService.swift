@@ -80,21 +80,23 @@ final class BackgroundScannerService {
         settings.lastScanDate = Date()
         saveSettings(settings)
         
-        // Run quick scan
-        let results = try? await StorageScanner.shared.scan()
+        var totalJunkSize: Int64 = 0
         
-        guard let results = results else { return }
-        
-        let totalJunkSize = results
-            .filter { $0.confidence > 0.5 }
-            .reduce(0) { $0 + $1.size }
+        // Consome o stream de resultados
+        for await partialResults in StorageScanner.shared.scan() {
+            let highConfidenceJunk = partialResults
+                .filter { $0.confidence > 0.5 }
+                .reduce(0) { $0 + $1.size }
+            
+            totalJunkSize += highConfidenceJunk
+        }
         
         let threshold = settings.junkThresholdGB * 1_000_000_000
         
         if totalJunkSize > threshold {
             await sendNotification(
-                title: "Cleanup Recommended",
-                body: "Found \(ByteCountFormatter.string(fromByteCount: totalJunkSize, countStyle: .file)) of junk files"
+                title: "Limpeza Recomendada",
+                body: "Encontramos \(ByteCountFormatter.string(fromByteCount: totalJunkSize, countStyle: .file)) de arquivos desnecessários."
             )
         }
     }

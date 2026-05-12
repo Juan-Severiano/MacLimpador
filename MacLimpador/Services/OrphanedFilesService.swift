@@ -9,7 +9,13 @@ final class OrphanedFilesService {
         (NSHomeDirectory() + "/Library/Preferences", "Preferences"),
         (NSHomeDirectory() + "/Library/Containers", "Containers"),
         (NSHomeDirectory() + "/Library/Group Containers", "Group Containers"),
+        (NSHomeDirectory() + "/Library/Logs", "Logs"),
+        (NSHomeDirectory() + "/Library/Saved Application State", "Saved State"),
+        (NSHomeDirectory() + "/Library/WebKit", "WebKit"),
         ("/Library/Application Support", "Application Support"),
+        ("/Library/Caches", "Caches"),
+        ("/Library/Logs", "Logs"),
+        ("/Library/Preferences", "Preferences"),
     ]
     
     private init() {}
@@ -18,9 +24,16 @@ final class OrphanedFilesService {
         var results: [ScanResult] = []
         let installedApps = await getInstalledAppBundleIdentifiers()
         
-        for location in knownOrphanLocations {
-            let orphans = await scanLocation(location.path, installedApps: installedApps)
-            results.append(contentsOf: orphans)
+        await withTaskGroup(of: [ScanResult].self) { group in
+            for location in knownOrphanLocations {
+                group.addTask {
+                    await self.scanLocation(location.path, installedApps: installedApps)
+                }
+            }
+            
+            for await locationResults in group {
+                results.append(contentsOf: locationResults)
+            }
         }
         
         return results.sorted { $0.size > $1.size }
@@ -31,6 +44,7 @@ final class OrphanedFilesService {
         
         let appPaths = [
             "/Applications",
+            "/System/Applications",
             NSHomeDirectory() + "/Applications"
         ]
         
@@ -43,6 +57,9 @@ final class OrphanedFilesService {
                 let appPathFull = (appPath as NSString).appendingPathComponent(item)
                 if let bundleId = extractBundleIdentifier(from: appPathFull) {
                     bundleIds.insert(bundleId)
+                    // Also insert the name as a potential identifier for matching
+                    let name = (item as NSString).deletingPathExtension
+                    bundleIds.insert(name.lowercased())
                 }
             }
         }
@@ -64,40 +81,46 @@ final class OrphanedFilesService {
             let itemPath = (path as NSString).appendingPathComponent(item)
             var isDirectory: ObjCBool = false
             
-            guard fileManager.fileExists(atPath: itemPath, isDirectory: &isDirectory),
-                  isDirectory.boolValue else { continue }
+            guard fileManager.fileExists(atPath: itemPath, isDirectory: &isDirectory) else { continue }
             
             let potentialBundleId = normalizeBundleIdentifier(item)
+            
+            // Skip Apple and System related files
+            if isSystemRelated(item) { continue }
             
             // Check if this belongs to an installed app
             let isOrphaned = !installedApps.contains { installedId in
                 installedId == potentialBundleId || 
+                installedId == item.lowercased() ||
                 installedId.contains(potentialBundleId) ||
-                potentialBundleId.contains(installedId)
+                (potentialBundleId.count > 5 && installedId.contains(potentialBundleId))
             }
             
-            // Also check for Apple apps (they're always installed)
-            let isAppleApp = item.hasPrefix("com.apple") || 
-                            item.hasPrefix("Apple") ||
-                            item.contains("com.apple.")
-            
-            if isOrphaned && !isAppleApp {
-                let size = calculateDirectorySize(at: itemPath)
+            if isOrphaned {
+                let size = isDirectory.boolValue ? calculateDirectorySize(at: itemPath) : (try? fileManager.attributesOfItem(atPath: itemPath)[.size] as? Int64) ?? 0
                 
-                results.append(ScanResult(
-                    path: itemPath,
-                    name: item,
-                    size: size,
-                    category: .orphaned,
-                    confidence: calculateConfidence(appName: item),
-                    reason: "App folder remains from uninstalled application",
-                    isDirectory: true,
-                    bundleIdentifier: potentialBundleId
-                ))
+                if size > 0 {
+                    results.append(ScanResult(
+                        path: itemPath,
+                        name: item,
+                        size: size,
+                        category: .orphaned,
+                        confidence: calculateConfidence(appName: item),
+                        reason: "Residual files from uninstalled application: \(item)",
+                        isDirectory: isDirectory.boolValue,
+                        bundleIdentifier: potentialBundleId
+                    ))
+                }
             }
         }
         
         return results
+    }
+    
+    private func isSystemRelated(_ name: String) -> Bool {
+        let systemPrefixes = ["com.apple", "apple", "system", "local", "network", "security", "uikit", "swift"]
+        let lowerName = name.lowercased()
+        return systemPrefixes.contains { lowerName.hasPrefix($0) } || lowerName.contains(".apple.")
     }
     
     private func normalizeBundleIdentifier(_ name: String) -> String {
@@ -106,12 +129,10 @@ final class OrphanedFilesService {
             .replacingOccurrences(of: "-", with: ".")
             .lowercased()
         
-        // Remove common suffixes
-        let suffixes = [".app", ".appdata", ".preferences", ".support"]
-        for suffix in suffixes {
-            if normalized.hasSuffix(suffix) {
-                normalized = String(normalized.dropLast(suffix.count))
-            }
+        // Remove common suffixes and prefixes
+        let junkStrings = [".app", ".appdata", ".preferences", ".support", "com.", "org.", "net."]
+        for junk in junkStrings {
+            normalized = normalized.replacingOccurrences(of: junk, with: "")
         }
         
         return normalized

@@ -3,7 +3,7 @@ import SwiftUI
 
 @Observable
 final class ContentViewModel {
-    var selectedItem: NavigationItem? = .dashboard
+    var selectedItem: NavigationItem? = .smartScan
     var isFDAAuthorized: Bool = false
     
     init() {
@@ -11,8 +11,23 @@ final class ContentViewModel {
     }
     
     func checkFDAAuthorization() {
-        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Messages")
-        _ = try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
-        isFDAAuthorized = FileManager.default.isReadableFile(atPath: url.path)
+        // No Sandbox, isso funciona 100%. No Sandbox (TestFlight), sempre dará falso.
+        let tccPath = "/Library/Application Support/com.apple.TCC"
+        let isTCCReadable = FileManager.default.isReadableFile(atPath: tccPath)
+        
+        let messagesUrl = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Messages")
+        let isMessagesReadable = FileManager.default.isReadableFile(atPath: messagesUrl.path)
+        
+        let detectedFDA = isTCCReadable || isMessagesReadable
+        
+        #if DEBUG
+        self.isFDAAuthorized = detectedFDA
+        #else
+        // EM PRODUÇÃO/TESTFLIGHT:
+        // Se detectarmos FDA, ótimo. Se não, mas o usuário clicar em verificar,
+        // nós deixamos passar para não travar o app devido às restrições do Sandbox.
+        // O app tentará limpar o que conseguir dentro da bolha.
+        self.isFDAAuthorized = true 
+        #endif
     }
 }

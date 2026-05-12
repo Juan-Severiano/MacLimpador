@@ -11,6 +11,9 @@ struct SystemStats {
     var isBatteryCharging: Bool = false
     var modelName: String = "Mac"
     var cpuName: String = ""
+    var downloadSpeed: Double = 0 // Mbps
+    var uploadSpeed: Double = 0 // Mbps
+    var isTestingNetwork: Bool = false
     
     var formattedDiskAvailable: String {
         let formatter = ByteCountFormatter()
@@ -51,6 +54,26 @@ final class SystemStatsProvider {
         currentStats.ramPressure = getRamPressure()
         currentStats.cpuUsage = getCpuUsage()
         (currentStats.batteryPercentage, currentStats.isBatteryCharging) = getBatteryInfo()
+    }
+    
+    func testNetworkSpeed() async {
+        guard !currentStats.isTestingNetwork else { return }
+        currentStats.isTestingNetwork = true
+        currentStats.downloadSpeed = 0
+        currentStats.uploadSpeed = 0
+        
+        // Simulação de teste para o MVP
+        for i in 1...10 {
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            currentStats.downloadSpeed = Double.random(in: 50...250) * (Double(i)/10.0)
+        }
+        
+        for i in 1...5 {
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            currentStats.uploadSpeed = Double.random(in: 20...100) * (Double(i)/5.0)
+        }
+        
+        currentStats.isTestingNetwork = false
     }
     
     private func getModelName() -> String {

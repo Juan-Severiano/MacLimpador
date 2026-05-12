@@ -22,23 +22,44 @@ final class HomebrewService {
     func listInstalledPackages() async -> [HomebrewPackage] {
         var packages: [HomebrewPackage] = []
         
-        // Get formulae
-        if let formulae = await runBrewCommand("list --formula") {
-            for line in formulae.components(separatedBy: "\n") where !line.isEmpty {
-                let package = await getPackageInfo(name: line, isCask: false)
-                packages.append(package)
-            }
-        }
+        // Get formulae and casks in parallel for speed
+        async let formulaeNames = runBrewCommand("list --formula")
+        async let casksNames = runBrewCommand("list --cask")
         
-        // Get casks
-        if let casks = await runBrewCommand("list --cask") {
-            for line in casks.components(separatedBy: "\n") where !line.isEmpty {
-                let package = await getPackageInfo(name: line, isCask: true)
-                packages.append(package)
+        let allFormulae = (await formulaeNames)?.components(separatedBy: "\n").filter { !$0.isEmpty } ?? []
+        let allCasks = (await casksNames)?.components(separatedBy: "\n").filter { !$0.isEmpty } ?? []
+        
+        await withTaskGroup(of: HomebrewPackage?.self) { group in
+            for name in allFormulae {
+                group.addTask { await self.getPackageInfo(name: name, isCask: false) }
+            }
+            for name in allCasks {
+                group.addTask { await self.getPackageInfo(name: name, isCask: true) }
+            }
+            
+            for await package in group {
+                if let pkg = package {
+                    packages.append(pkg)
+                }
             }
         }
         
         return packages.sorted { $0.size > $1.size }
+    }
+    
+    func getPackagesAsScanResults() async -> [ScanResult] {
+        let pkgs = await listInstalledPackages()
+        return pkgs.map { pkg in
+            ScanResult(
+                path: pkg.isCask ? "/Applications/\(pkg.name).app" : "brew/\(pkg.name)",
+                name: pkg.name,
+                size: pkg.size,
+                category: .package,
+                confidence: 0.2, // Packages are usually kept unless the user wants to uninstall
+                reason: "Installed via Homebrew (\(pkg.version))",
+                isDirectory: pkg.isCask
+            )
+        }
     }
     
     private func getPackageInfo(name: String, isCask: Bool) async -> HomebrewPackage {
