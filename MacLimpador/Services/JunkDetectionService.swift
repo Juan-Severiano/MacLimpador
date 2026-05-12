@@ -73,42 +73,57 @@ final class JunkDetectionService {
         
         // File extension pattern (20%)
         let ext = (path as NSString).pathExtension.lowercased()
-        let junkExtensions = ["tmp", "cache", "bak", "old", "log", "ds_store"]
+        let junkExtensions = ["tmp", "cache", "bak", "old", "log", "ds_store", "dms", "part", "crdownload"]
         
         if junkExtensions.contains(ext) {
             confidence += featureWeights["fileExtension"]! * 1.0
-            reasons.append("Junk file extension: .\(ext)")
+            reasons.append("Temporary file extension: .\(ext)")
+        } else if ext == "dmg" || ext == "pkg" || ext == "zip" {
+            if daysSinceAccess > 30 {
+                confidence += featureWeights["fileExtension"]! * 0.6
+                reasons.append("Old installer or archive (\(daysSinceAccess) days)")
+            }
         }
         
         // Parent directory pattern (15%)
-        let parentDir = (path as NSString).deletingLastPathComponent
-        let junkDirs = ["/Caches/", "/Logs/", "/Temp/", "/tmp"]
+        let parentDir = (path as NSString).deletingLastPathComponent.lowercased()
+        let junkDirs = ["/caches/", "/logs/", "/temp/", "/tmp", "/deriveddata/", "/npm/_cacache/"]
         
         if junkDirs.contains(where: { parentDir.contains($0) }) {
             confidence += featureWeights["parentDirectory"]! * 1.0
-            reasons.append("Located in junk directory")
+            reasons.append("Located in known junk directory")
         }
         
         // File size pattern (15%)
-        // Very small files are often temporary
         if fileSize < 1024 && fileSize > 0 {
             confidence += featureWeights["fileSize"]! * 0.3
-        } else if fileSize > 1_000_000_000 {
-            // Very large files that aren't accessed often
-            if daysSinceAccess > 180 {
-                confidence += featureWeights["fileSize"]! * 0.8
-                reasons.append("Large file (>1GB) not accessed recently")
+        } else if fileSize > 500_000_000 {
+            if daysSinceAccess > 60 {
+                confidence += featureWeights["fileSize"]! * 0.7
+                reasons.append("Large file not used in 2 months")
             }
         }
         
         // App installed check (10%)
-        let appInPath = parentDir.contains("Application Support")
+        let appInPath = parentDir.contains("application support") || parentDir.contains("containers")
         if appInPath {
             let bundleId = extractBundleIdFromPath(path)
             if let bundleId = bundleId, !isAppInstalled(bundleId) {
                 confidence += featureWeights["appInstalled"]! * 1.0
-                reasons.append("App '\(bundleId)' is not installed")
+                reasons.append("Associated app '\(bundleId)' is not installed")
             }
+        }
+        
+        // Special case: Xcode DerivedData
+        if path.contains("DerivedData") {
+            confidence = max(confidence, 0.9)
+            reasons.append("Xcode build artifacts")
+        }
+        
+        // Special case: Chrome/Browser Caches
+        if path.contains("Chrome/Default/Cache") || path.contains("Safari/Library/Caches") {
+            confidence = max(confidence, 0.85)
+            reasons.append("Browser cache")
         }
         
         // Cap confidence at 1.0

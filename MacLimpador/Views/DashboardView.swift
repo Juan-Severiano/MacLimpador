@@ -2,12 +2,17 @@ import SwiftUI
 import Charts
 
 struct DashboardView: View {
+    @Bindable var contentViewModel: ContentViewModel
     @State private var statsProvider = SystemStatsProvider.shared
     
     var body: some View {
         ScrollView {
             VStack(spacing: 32) {
                 headerSection
+                
+                if !contentViewModel.isFDAAuthorized {
+                    permissionBanner
+                }
                 
                 healthCardsSection
                 
@@ -46,6 +51,36 @@ struct DashboardView: View {
                     .foregroundStyle(.white)
             }
         }
+    }
+    
+    private var permissionBanner: some View {
+        HStack(spacing: 16) {
+            Image(systemName: "lock.trianglebadge.exclamationmark.fill")
+                .font(.title)
+                .foregroundStyle(.orange)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Acesso Limitado")
+                    .font(.headline)
+                Text("O MacLimpador não tem acesso total ao disco. Algumas funções de limpeza podem não funcionar.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Spacer()
+            
+            Button("Resolver") {
+                contentViewModel.selectedItem = .settings
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding()
+        .background(Color.orange.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color.orange.opacity(0.2), lineWidth: 1)
+        )
     }
     
     private var healthStatus: String {

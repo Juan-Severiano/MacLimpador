@@ -63,8 +63,10 @@ struct DetailView: View {
         Group {
             if let selected = viewModel.selectedItem {
                 switch selected {
+                case .smartScan:
+                    SmartScanView()
                 case .dashboard:
-                    DashboardView()
+                    DashboardView(contentViewModel: viewModel)
                 case .storage:
                     StorageView()
                 case .memory:
@@ -73,6 +75,8 @@ struct DetailView: View {
                     CPUDashboardView()
                 case .uninstaller:
                     UninstallerView()
+                case .settings:
+                    SettingsView(viewModel: viewModel)
                 }
             } else {
                 EmptyDetailView()

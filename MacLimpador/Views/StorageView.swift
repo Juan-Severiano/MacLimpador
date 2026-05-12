@@ -2,13 +2,14 @@ import SwiftUI
 
 struct StorageView: View {
     @State private var viewModel = StorageViewModel()
-    @State private var currentPath: String = "/"
     @State private var viewMode: FileViewMode = .list
     @State private var isScanning: Bool = false
     
     var body: some View {
         VStack(spacing: 0) {
             StorageToolbar(viewModel: viewModel, viewMode: $viewMode, isScanning: $isScanning)
+            
+            Divider()
             
             HSplitView {
                 categorySidebar
@@ -24,10 +25,12 @@ struct StorageView: View {
     }
     
     private var categorySidebar: some View {
-        List {
+        List(selection: Binding(get: { viewModel.selectedCategory }, set: { viewModel.selectCategory($0) })) {
             Section("Categorias") {
-                ForEach(viewModel.categorySummary) { item in
-                    SidebarCategoryRow(summary: item)
+                ForEach(StorageCategory.allCases) { category in
+                    let summary = viewModel.categorySummary.first(where: { $0.category == category })
+                    SidebarCategoryRow(category: category, summary: summary)
+                        .tag(category)
                 }
             }
             
@@ -46,12 +49,14 @@ struct StorageView: View {
     }
     
     private var fileContentView: some View {
-        Group {
-            if isScanning {
-                scanningView
-            } else if viewModel.filteredResults.isEmpty {
+        VStack(spacing: 0) {
+            if isScanning && viewModel.scanResults.isEmpty {
+                initialScanningView
+            } else if !isScanning && viewModel.filteredResults.isEmpty {
                 emptyView
             } else {
+                selectionHeader
+                
                 if viewMode == .grid {
                     gridView
                 } else {
@@ -61,12 +66,42 @@ struct StorageView: View {
         }
     }
     
-    private var scanningView: some View {
+    private var selectionHeader: some View {
+        HStack {
+            Button(action: {
+                if viewModel.selectedItemIds.count == viewModel.filteredResults.count {
+                    viewModel.deselectAll()
+                } else {
+                    viewModel.selectAllFiltered()
+                }
+            }) {
+                HStack {
+                    Image(systemName: viewModel.selectedItemIds.count == viewModel.filteredResults.count ? "checkmark.square.fill" : (viewModel.selectedItemIds.isEmpty ? "square" : "minus.square.fill"))
+                    Text(viewModel.selectedItemIds.count == viewModel.filteredResults.count ? "Desmarcar Todos" : "Selecionar Todos")
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            
+            Spacer()
+            
+            if !viewModel.selectedItemIds.isEmpty {
+                Text("\(viewModel.selectedItemIds.count) selecionados")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+            }
+        }
+        .background(Color.secondary.opacity(0.05))
+    }
+    
+    private var initialScanningView: some View {
         VStack(spacing: 20) {
             ProgressView()
                 .scaleEffect(1.5)
             
-            Text("Analisando arquivos...")
+            Text("Iniciando análise...")
                 .font(.headline)
             
             Text(viewModel.scanProgress)
@@ -98,18 +133,27 @@ struct StorageView: View {
     }
     
     private var listView: some View {
-        List(viewModel.filteredResults) { item in
-            FileListRow(result: item)
+        List {
+            ForEach(viewModel.filteredResults) { item in
+                FileListRow(result: item, isSelected: viewModel.selectedItemIds.contains(item.id)) {
+                    viewModel.toggleSelection(for: item.id)
+                }
+            }
         }
+        .listStyle(.inset)
     }
     
     private var gridView: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 16) {
-            ForEach(viewModel.filteredResults) { item in
-                FileGridItem(result: item)
+        ScrollView {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 140))], spacing: 16) {
+                ForEach(viewModel.filteredResults) { item in
+                    FileGridItem(result: item, isSelected: viewModel.selectedItemIds.contains(item.id)) {
+                        viewModel.toggleSelection(for: item.id)
+                    }
+                }
             }
+            .padding()
         }
-        .padding()
     }
     
     private func startScan() async {
@@ -128,72 +172,108 @@ struct StorageToolbar: View {
     @Bindable var viewModel: StorageViewModel
     @Binding var viewMode: FileViewMode
     @Binding var isScanning: Bool
+    @State private var showingDeleteConfirmation = false
     
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             Button(action: { Task { await viewModel.startScan() } }) {
                 Label("Escanear", systemImage: "magnifyingglass")
             }
             .disabled(isScanning)
             
-            Picker("Visualização", selection: $viewMode) {
+            if isScanning {
+                ProgressView()
+                    .controlSize(.small)
+                Text(viewModel.scanProgress)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(width: 150, alignment: .leading)
+            }
+            
+            Picker("", selection: $viewMode) {
                 ForEach(FileViewMode.allCases, id: \.self) { mode in
-                    Text(mode.rawValue)
+                    Text(mode.rawValue).tag(mode)
                 }
             }
             .pickerStyle(.segmented)
             .frame(width: 120)
             
+            Button(action: { 
+                Task { 
+                    await viewModel.deleteHighConfidenceItems() 
+                } 
+            }) {
+                Label("Limpeza Inteligente", systemImage: "sparkles")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.purple)
+            .disabled(viewModel.scanResults.filter({ $0.confidence > 0.8 }).isEmpty)
+
             Spacer()
             
-            if !viewModel.filteredResults.isEmpty {
-                Text("\(viewModel.filteredResults.count) itens")
-                    .foregroundStyle(.secondary)
+            Button(action: {
+                showingDeleteConfirmation = true
+            }) {
+                Label("Deletar Selecionados", systemImage: "trash")
             }
-            
-            Button(action: {}) {
-                Label("Mover", systemImage: "externaldrive")
-            }
-            .disabled(viewModel.filteredResults.isEmpty)
-            
-            Button(action: {}) {
-                Label("Deletar", systemImage: "trash")
-            }
-            .disabled(viewModel.filteredResults.isEmpty)
+            .disabled(viewModel.selectedItemIds.isEmpty)
             .foregroundStyle(.red)
         }
         .padding()
+        .controlSize(.regular)
+        .confirmationDialog(
+            "Tem certeza?",
+            isPresented: $showingDeleteConfirmation,
+            actions: {
+                Button("Deletar \(viewModel.selectedItemIds.count) itens", role: .destructive) {
+                    Task {
+                        await viewModel.deleteSelectedItems()
+                    }
+                }
+                Button("Cancelar", role: .cancel) { }
+            },
+            message: {
+                Text("Esta ação moverá os arquivos selecionados para a Lixeira.")
+            }
+        )
     }
 }
 
 struct SidebarCategoryRow: View {
-    let summary: StorageViewModel.CategorySummaryItem
+    let category: StorageCategory
+    let summary: StorageViewModel.CategorySummaryItem?
     
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: summary.category.iconName)
+            Image(systemName: category.iconName)
                 .foregroundStyle(color)
-                .frame(width: 24)
+                .frame(width: 20)
             
             VStack(alignment: .leading, spacing: 2) {
-                Text(summary.category.rawValue)
+                Text(category.rawValue)
                     .font(.subheadline)
                 
-                Text("\(summary.count) itens")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                if let summary = summary {
+                    Text("\(summary.count) itens")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
             
             Spacer()
             
-            Text(summary.formattedSize)
-                .font(.subheadline)
-                .fontWeight(.medium)
+            if let summary = summary {
+                Text(summary.formattedSize)
+                    .font(.caption)
+                    .fontWeight(.medium)
+            }
         }
+        .padding(.vertical, 2)
     }
     
     private var color: Color {
-        switch summary.category {
+        switch category {
         case .junk: return .red
         case .orphaned: return .orange
         case .package: return .blue
@@ -208,26 +288,33 @@ struct SidebarCategoryRow: View {
 
 struct FileListRow: View {
     let result: ScanResult
+    let isSelected: Bool
+    let onToggle: () -> Void
     
     var body: some View {
         HStack(spacing: 12) {
+            Toggle("", isOn: Binding(get: { isSelected }, set: { _ in onToggle() }))
+                .toggleStyle(.checkbox)
+                .labelsHidden()
+            
             Image(systemName: result.category.iconName)
                 .foregroundStyle(iconColor)
-                .frame(width: 32)
+                .frame(width: 24)
             
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(result.name)
                     .lineLimit(1)
+                    .font(.body)
                 
                 Text(result.path)
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             
             Spacer()
             
-            VStack(alignment: .trailing, spacing: 4) {
+            VStack(alignment: .trailing, spacing: 2) {
                 Text(result.formattedSize)
                     .font(.system(.body, design: .monospaced))
                 
@@ -235,6 +322,10 @@ struct FileListRow: View {
             }
         }
         .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onToggle()
+        }
     }
     
     private var iconColor: Color {
@@ -253,33 +344,48 @@ struct FileListRow: View {
 
 struct FileGridItem: View {
     let result: ScanResult
+    let isSelected: Bool
+    let onToggle: () -> Void
     @State private var isHovered = false
     
     var body: some View {
         VStack(spacing: 8) {
+            HStack {
+                Toggle("", isOn: Binding(get: { isSelected }, set: { _ in onToggle() }))
+                    .toggleStyle(.checkbox)
+                    .labelsHidden()
+                Spacer()
+                ConfidenceView(confidence: result.confidence)
+            }
+            
             Image(systemName: result.category.iconName)
-                .font(.title)
+                .font(.system(size: 32))
                 .foregroundStyle(iconColor)
             
             Text(result.name)
                 .font(.caption)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
+                .frame(height: 32)
             
             Text(result.formattedSize)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        .frame(width: 100, height: 100)
-        .padding(8)
+        .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(isHovered ? Color.secondary.opacity(0.15) : Color.secondary.opacity(0.05))
+                .fill(isSelected ? Color.accentColor.opacity(0.1) : (isHovered ? Color.secondary.opacity(0.1) : Color.secondary.opacity(0.05)))
         )
-        .scaleEffect(isHovered ? 1.05 : 1.0)
-        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(isSelected ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 2)
+        )
         .onHover { hovering in
             isHovered = hovering
+        }
+        .onTapGesture {
+            onToggle()
         }
     }
     
