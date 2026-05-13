@@ -3,16 +3,21 @@ import SwiftUI
 struct UninstallFeatureView: View {
     @State private var viewModel = UninstallFeatureViewModel()
     @State private var showConfirmation = false
+    @State private var hasScanned = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            content
-        }
-        .task {
-            if viewModel.candidates.isEmpty {
-                viewModel.scan()
+        ZStack {
+            if !hasScanned && viewModel.candidates.isEmpty && !viewModel.isScanning {
+                landing
+            } else {
+                VStack(spacing: 0) {
+                    actionBar
+                    Divider().opacity(0.3)
+                    content
+                }
+                .task {
+                    if viewModel.candidates.isEmpty { viewModel.scan() }
+                }
             }
         }
         .confirmationDialog(
@@ -25,15 +30,34 @@ struct UninstallFeatureView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will move \(viewModel.formattedSelectedTotalSize) (apps + residues) to the Trash. You can recover items from the Trash.")
+            Text("This will move \(viewModel.formattedSelectedTotalSize) (apps + residues) to the Trash.")
         }
     }
 
-    private var header: some View {
+    // MARK: - Landing Page
+
+    private var landing: some View {
+        PlanetLandingView(
+            planet: .mars,
+            haiku: [
+                "Red sands bury old traces.",
+                "A great wind opens the road."
+            ],
+            ctaLabel: "Pick apps",
+            isLoading: viewModel.isScanning
+        ) {
+            hasScanned = true
+            viewModel.scan()
+        }
+    }
+
+    // MARK: - Action Bar
+
+    private var actionBar: some View {
         HStack(spacing: 12) {
             TextField("Search apps", text: $viewModel.query)
                 .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 300)
+                .frame(maxWidth: 280)
 
             Button(action: viewModel.scan) {
                 Label("Rescan", systemImage: "arrow.clockwise")
@@ -52,8 +76,7 @@ struct UninstallFeatureView: View {
             Spacer()
 
             if viewModel.isScanning || viewModel.isExecuting {
-                ProgressView()
-                    .controlSize(.small)
+                ProgressView().controlSize(.small)
             }
 
             Text("Selected: \(viewModel.formattedSelectedTotalSize)")
@@ -63,38 +86,34 @@ struct UninstallFeatureView: View {
         .padding(12)
     }
 
+    // MARK: - Content
+
     @ViewBuilder
     private var content: some View {
         if viewModel.isScanning && viewModel.candidates.isEmpty {
-            ProgressView("Scanning installed apps...")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 12) {
+                ProgressView()
+                Text("Scanning installed apps…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if viewModel.filteredCandidates.isEmpty {
             ContentUnavailableView("No apps found", systemImage: "app.dashed")
         } else {
             List(viewModel.filteredCandidates) { candidate in
-                row(candidate)
+                appRow(candidate)
             }
             .listStyle(.inset)
             .overlay(alignment: .bottom) {
                 if let result = viewModel.executionResult {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Last uninstall: reclaimed \(result.formattedReclaimedSize), removed apps \(result.removedApps), residues \(result.removedResidues)")
-                        if !result.warnings.isEmpty {
-                            Text(result.warnings.prefix(2).joined(separator: " • "))
-                                .foregroundStyle(.orange)
-                                .lineLimit(2)
-                        }
-                    }
-                    .font(.caption)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.regularMaterial)
+                    resultFooter(result)
                 }
             }
         }
     }
 
-    private func row(_ candidate: UninstallCandidate) -> some View {
+    private func appRow(_ candidate: UninstallCandidate) -> some View {
         DisclosureGroup {
             if candidate.residueTargets.isEmpty {
                 Text("No residues found")
@@ -108,21 +127,15 @@ struct UninstallFeatureView: View {
                             .foregroundStyle(residue.riskLevel == .high ? .red : .secondary)
                             .padding(.leading, 28)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(residue.displayName)
-                                .font(.caption)
+                            Text(residue.displayName).font(.caption)
                             Text(residue.path)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                                .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                         }
                         Spacer()
-                        Text(residue.formattedSize)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        Text(residue.formattedSize).font(.caption).foregroundStyle(.secondary)
                         if residue.riskLevel == .high {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                                .font(.caption)
+                                .foregroundStyle(.orange).font(.caption)
                         }
                     }
                 }
@@ -144,11 +157,9 @@ struct UninstallFeatureView: View {
                     .frame(width: 28, height: 28)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(candidate.appName)
-                        .lineLimit(1)
+                    Text(candidate.appName).lineLimit(1)
                     Text(candidate.bundleIdentifier ?? "Unknown Bundle ID")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
 
                 Spacer()
@@ -162,5 +173,19 @@ struct UninstallFeatureView: View {
                 }
             }
         }
+    }
+
+    private func resultFooter(_ result: UninstallExecutionResult) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Last uninstall: reclaimed \(result.formattedReclaimedSize), removed apps \(result.removedApps), residues \(result.removedResidues)")
+            if !result.warnings.isEmpty {
+                Text(result.warnings.prefix(2).joined(separator: " • "))
+                    .foregroundStyle(.orange).lineLimit(2)
+            }
+        }
+        .font(.caption)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial)
     }
 }

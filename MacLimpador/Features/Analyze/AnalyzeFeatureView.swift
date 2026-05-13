@@ -5,9 +5,22 @@ struct AnalyzeFeatureView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
-            content
+            topBar
+            Divider().opacity(0.3)
+            if let snapshot = viewModel.snapshot {
+                mainContent(snapshot)
+            } else if viewModel.isScanning {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("Analyzing disk…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ContentUnavailableView("Pick a folder to analyze", systemImage: "internaldrive")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .task {
             if viewModel.snapshot == nil {
@@ -25,245 +38,293 @@ struct AnalyzeFeatureView: View {
             Button("Move \(viewModel.pendingDeletion.count) item(s) to Trash", role: .destructive) {
                 viewModel.confirmTrash()
             }
-            Button("Cancel", role: .cancel) {
-                viewModel.cancelTrash()
-            }
+            Button("Cancel", role: .cancel) { viewModel.cancelTrash() }
         } message: {
-            let size = ByteCountFormatter.string(
-                fromByteCount: viewModel.pendingDeletion.reduce(0) { total, path in
-                    total + AnalyzeService.calculateSizeSync(at: URL(fileURLWithPath: path))
-                },
-                countStyle: .file
-            )
-            Text("This will move approximately \(size) to the Trash. You can recover items from the Trash.")
+            Text("Items will be moved to Trash. You can recover them later.")
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 12) {
+    // MARK: - Top Bar
+
+    private var topBar: some View {
+        HStack(spacing: 10) {
             Button(action: { viewModel.goTo(NSHomeDirectory()) }) {
                 Label("Home", systemImage: "house")
+                    .font(.system(size: 12))
             }
             .disabled(viewModel.isScanning)
 
-            Button(action: viewModel.pickDirectory) {
-                Label("Pick Folder", systemImage: "folder")
+            if viewModel.currentPath != NSHomeDirectory() {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                Text(URL(fileURLWithPath: viewModel.currentPath).lastPathComponent)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
             }
-            .disabled(viewModel.isScanning)
+
+            Spacer()
+
+            if let snapshot = viewModel.snapshot {
+                diskUsageBar(snapshot)
+                    .frame(width: 200)
+            }
 
             Button(action: { viewModel.scan(forceRefresh: true) }) {
-                Label("Refresh", systemImage: "arrow.clockwise")
+                Image(systemName: "arrow.clockwise")
             }
             .disabled(viewModel.isScanning)
+            .help("Refresh")
 
-            Picker("Mode", selection: $viewModel.showLargeFiles) {
-                Text("Entries").tag(false)
-                Text("Large Files").tag(true)
+            Button(action: viewModel.pickDirectory) {
+                Image(systemName: "folder.badge.plus")
             }
-            .pickerStyle(.segmented)
-            .frame(width: 190)
+            .disabled(viewModel.isScanning)
+            .help("Pick Folder")
 
-            Button(action: viewModel.requestTrashSelection) {
-                Label("Trash Selected", systemImage: "trash")
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
-            .disabled(isTrashSelectionDisabled)
-
-            Spacer()
-
-            if viewModel.isScanning {
-                ProgressView()
-                    .controlSize(.small)
-            }
-
-            Text(viewModel.currentPath)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .frame(maxWidth: 320, alignment: .trailing)
+            if viewModel.isScanning { ProgressView().controlSize(.small) }
         }
-        .padding(12)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
     }
 
-    private var isTrashSelectionDisabled: Bool {
-        if viewModel.showLargeFiles {
-            return viewModel.selectedLargeFileIDs.isEmpty || viewModel.isScanning
+    private func diskUsageBar(_ snapshot: AnalyzeSnapshot) -> some View {
+        VStack(alignment: .trailing, spacing: 3) {
+            HStack(spacing: 4) {
+                Text(snapshot.formattedTotalSize)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.orange)
+                Text("/ \(ByteCountFormatter.string(fromByteCount: snapshot.diskTotalBytes, countStyle: .file)) used")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.1)).frame(height: 5)
+                    Capsule().fill(Color.orange)
+                        .frame(width: geo.size.width * CGFloat(snapshot.diskUsedPercent), height: 5)
+                }
+            }
+            .frame(height: 5)
         }
-        return viewModel.selectedEntryIDs.isEmpty || viewModel.isScanning
     }
 
-    @ViewBuilder
-    private var content: some View {
-        if let snapshot = viewModel.snapshot {
-            List {
-                if viewModel.showLargeFiles {
-                    ForEach(snapshot.largeFiles) { file in
-                        largeFileRow(file)
-                    }
-                } else {
-                    let insights = snapshot.entries.filter { $0.kind == .insight }
-                    let regular = snapshot.entries.filter { $0.kind != .insight }
+    // MARK: - Main Content (Two-Panel)
 
-                    if !insights.isEmpty {
-                        Section("Hidden Space Insights") {
-                            ForEach(insights) { entry in
-                                insightRow(entry)
-                            }
-                        }
-                    }
+    private func mainContent(_ snapshot: AnalyzeSnapshot) -> some View {
+        let regularEntries = snapshot.entries.filter { $0.kind != .insight }
+        let insights = snapshot.entries.filter { $0.kind == .insight }
 
-                    if !regular.isEmpty {
-                        Section(viewModel.currentPath == NSHomeDirectory() ? "Home Directory" : "Contents") {
-                            ForEach(regular) { entry in
-                                entryRow(entry)
-                            }
+        return HStack(spacing: 0) {
+            // Left Sidebar
+            sidebar(snapshot: snapshot, entries: regularEntries, insights: insights)
+                .frame(width: 260)
+
+            Divider().opacity(0.3)
+
+            // Right: Treemap or Large Files
+            if viewModel.showLargeFiles {
+                largeFilesList(snapshot.largeFiles)
+            } else {
+                treemapPanel(entries: regularEntries)
+            }
+        }
+    }
+
+    // MARK: - Sidebar
+
+    private func sidebar(snapshot: AnalyzeSnapshot, entries: [AnalyzeEntry], insights: [AnalyzeEntry]) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // Planet + counts
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        PlanetView(type: .jupiter, size: 60)
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("\(entries.count) items")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text(snapshot.formattedTotalSize)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
-            }
-            .listStyle(.inset)
-            .overlay(alignment: .bottom) {
-                footer(snapshot)
-            }
-        } else if viewModel.isScanning {
-            ProgressView("Analyzing disk...")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ContentUnavailableView("No analysis data", systemImage: "internaldrive")
-        }
-    }
+                .padding(.horizontal, 14)
+                .padding(.top, 12)
 
-    private func insightRow(_ entry: AnalyzeEntry) -> some View {
-        HStack(spacing: 12) {
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { viewModel.selectedEntryIDs.contains(entry.id) },
-                    set: { _ in viewModel.toggleEntry(entry.id) }
-                )
-            )
-            .toggleStyle(.checkbox)
-            .labelsHidden()
+                Divider().opacity(0.3)
 
-            Text("👀")
-                .font(.title3)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.name)
-                    .lineLimit(1)
-                Text(entry.path)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            entryActions(path: entry.path, isDirectory: true)
-
-            Text(entry.formattedSize)
-                .font(.system(.body, design: .monospaced))
-                .foregroundStyle(.orange)
-        }
-    }
-
-    private func entryRow(_ entry: AnalyzeEntry) -> some View {
-        HStack(spacing: 12) {
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { viewModel.selectedEntryIDs.contains(entry.id) },
-                    set: { _ in viewModel.toggleEntry(entry.id) }
-                )
-            )
-            .toggleStyle(.checkbox)
-            .labelsHidden()
-
-            Image(systemName: entry.kind == .directory ? "folder.fill" : "doc.fill")
-                .foregroundStyle(entry.kind == .directory ? .blue : .secondary)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.name)
-                    .lineLimit(1)
-                Text(entry.path)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            if entry.kind == .directory {
-                Button("Open") {
-                    viewModel.goTo(entry.path)
+                // Mode selector
+                Picker("Mode", selection: $viewModel.showLargeFiles) {
+                    Text("Contents").tag(false)
+                    Text("Large Files").tag(true)
                 }
-                .buttonStyle(.link)
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 14)
+
+                // Insights
+                if !insights.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Hidden Space")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 14)
+
+                        ForEach(insights) { entry in
+                            sidebarInsightRow(entry, total: snapshot.totalSize)
+                        }
+                    }
+                }
+
+                // Directory list
+                if !entries.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(viewModel.currentPath == NSHomeDirectory() ? "Home Directory" : "Contents")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 14)
+
+                        ForEach(entries) { entry in
+                            sidebarEntryRow(entry, total: snapshot.totalSize)
+                        }
+                    }
+                }
+
+                // Trash selected
+                if !viewModel.selectedEntryIDs.isEmpty {
+                    Button(action: viewModel.requestTrashSelection) {
+                        Label("Trash Selected (\(viewModel.selectedEntryIDs.count))", systemImage: "trash")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .padding(.horizontal, 14)
+                }
+
+                Spacer(minLength: 20)
             }
-
-            entryActions(path: entry.path, isDirectory: entry.kind == .directory)
-
-            Text(entry.formattedSize)
-                .font(.system(.body, design: .monospaced))
         }
     }
 
-    private func largeFileRow(_ file: LargeFileEntry) -> some View {
-        HStack(spacing: 12) {
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { viewModel.selectedLargeFileIDs.contains(file.id) },
-                    set: { _ in viewModel.toggleLargeFile(file.id) }
-                )
-            )
-            .toggleStyle(.checkbox)
-            .labelsHidden()
+    private func sidebarEntryRow(_ entry: AnalyzeEntry, total: Int64) -> some View {
+        let fraction = total > 0 ? Double(entry.size) / Double(total) : 0
 
-            Image(systemName: "doc.fill")
-                .foregroundStyle(.orange)
+        return Button(action: {
+            if entry.kind == .directory { viewModel.goTo(entry.path) }
+        }) {
+            HStack(spacing: 8) {
+                Toggle("", isOn: Binding(
+                    get: { viewModel.selectedEntryIDs.contains(entry.id) },
+                    set: { _ in viewModel.toggleEntry(entry.id) }
+                ))
+                .toggleStyle(.checkbox)
+                .labelsHidden()
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(file.name)
-                    .lineLimit(1)
-                Text(file.path)
-                    .font(.caption2)
+                Image(systemName: entry.kind == .directory ? "folder.fill" : "doc.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(entry.kind == .directory ? .orange.opacity(0.8) : .secondary)
+                    .frame(width: 14)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.name)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 1.5).fill(Color.white.opacity(0.08)).frame(height: 3)
+                            RoundedRectangle(cornerRadius: 1.5).fill(Color.orange.opacity(0.6))
+                                .frame(width: max(0, geo.size.width * CGFloat(fraction)), height: 3)
+                        }
+                    }
+                    .frame(height: 3)
+                }
+
+                Text(String(format: "%.0f%%", fraction * 100))
+                    .font(.system(size: 10))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .frame(width: 30, alignment: .trailing)
             }
-
-            Spacer()
-
-            entryActions(path: file.path, isDirectory: false)
-
-            Text(file.formattedSize)
-                .font(.system(.body, design: .monospaced))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 5)
         }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
     }
 
-    private func entryActions(path: String, isDirectory: Bool) -> some View {
+    private func sidebarInsightRow(_ entry: AnalyzeEntry, total: Int64) -> some View {
         HStack(spacing: 8) {
-            Button("Reveal") { viewModel.perform(.reveal, on: path) }
-                .buttonStyle(.link)
-            if !isDirectory {
-                Button("Preview") { viewModel.perform(.preview, on: path) }
-                    .buttonStyle(.link)
+            Image(systemName: "eye.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(.yellow)
+                .frame(width: 14)
+            Text(entry.name)
+                .font(.system(size: 11))
+                .lineLimit(1)
+            Spacer()
+            Text(entry.formattedSize)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.orange)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture { viewModel.toggleEntry(entry.id) }
+    }
+
+    // MARK: - Treemap
+
+    private func treemapPanel(entries: [AnalyzeEntry]) -> some View {
+        let items = entries.enumerated().map { (idx, entry) in
+            TreemapItem(
+                name: entry.name,
+                path: entry.path,
+                size: max(entry.size, 1),
+                color: Color.treemapColor(at: idx)
+            )
+        }
+
+        return Group {
+            if items.isEmpty {
+                ContentUnavailableView("No items", systemImage: "folder")
+            } else {
+                TreemapView(items: items) { path in
+                    viewModel.goTo(path)
+                }
+                .padding(8)
             }
         }
     }
 
-    private func footer(_ snapshot: AnalyzeSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Scanned: \(snapshot.formattedTotalSize) • Files: \(snapshot.totalFiles)")
-                .font(.caption)
-            if let deletion = viewModel.lastDeletionResult {
-                Text("Last deletion: reclaimed \(deletion.formattedReclaimedSize), deleted \(deletion.deletedCount), failed \(deletion.failedCount)")
-                    .font(.caption2)
-                    .foregroundStyle(deletion.failedCount > 0 ? .orange : .secondary)
+    // MARK: - Large Files List
+
+    private func largeFilesList(_ files: [LargeFileEntry]) -> some View {
+        List(files) { file in
+            HStack(spacing: 12) {
+                Image(systemName: "doc.fill")
+                    .foregroundStyle(.orange)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(file.name).lineLimit(1)
+                    Text(file.path)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                HStack(spacing: 8) {
+                    Button("Reveal") { viewModel.perform(.reveal, on: file.path) }.buttonStyle(.link)
+                    Button("Preview") { viewModel.perform(.preview, on: file.path) }.buttonStyle(.link)
+                }
+
+                Text(file.formattedSize)
+                    .font(.system(.body, design: .monospaced))
             }
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial)
+        .listStyle(.inset)
     }
 }

@@ -3,29 +3,29 @@ import SwiftUI
 enum AppSection: String, CaseIterable, Identifiable {
     case clean
     case uninstall
+    case optimize
     case analyze
     case status
-    case optimize
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .clean: return "Clean"
-        case .uninstall: return "Uninstall"
-        case .analyze: return "Analyze"
-        case .status: return "Status"
-        case .optimize: return "Optimize"
+        case .clean: return "clean"
+        case .uninstall: return "uninstall"
+        case .optimize: return "optimize"
+        case .analyze: return "analyze"
+        case .status: return "status"
         }
     }
 
-    var icon: String {
+    var backgroundTint: Color {
         switch self {
-        case .clean: return "sparkles"
-        case .uninstall: return "xmark.bin.fill"
-        case .analyze: return "internaldrive"
-        case .status: return "waveform.path.ecg"
-        case .optimize: return "bolt.fill"
+        case .clean: return Color(red: 0.08, green: 0.13, blue: 0.24)
+        case .uninstall: return Color(red: 0.20, green: 0.06, blue: 0.06)
+        case .optimize: return Color(red: 0.06, green: 0.12, blue: 0.18)
+        case .analyze: return Color(red: 0.15, green: 0.11, blue: 0.05)
+        case .status: return Color(red: 0.12, green: 0.10, blue: 0.05)
         }
     }
 }
@@ -35,40 +35,31 @@ struct AppShellView: View {
     @State private var showingSettings: Bool = false
 
     var body: some View {
-        Group {
-            switch selectedSection {
-            case .clean:
-                CleanView()
-            case .uninstall:
-                UninstallFeatureView()
-            case .analyze:
-                AnalyzeFeatureView()
-            case .status:
-                StatusFeatureView()
-            case .optimize:
-                OptimizeFeatureView()
-            }
-        }
-        .navigationTitle(selectedSection.title)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("Section", selection: $selectedSection) {
-                    ForEach(AppSection.allCases) { section in
-                        Label(section.title, systemImage: section.icon)
-                            .tag(section)
+        ZStack {
+            selectedSection.backgroundTint
+                .ignoresSafeArea()
+                .animation(.easeInOut(duration: 0.35), value: selectedSection)
+
+            VStack(spacing: 0) {
+                customTabBar
+
+                Divider().opacity(0.2)
+
+                Group {
+                    switch selectedSection {
+                    case .clean:
+                        CleanView()
+                    case .uninstall:
+                        UninstallFeatureView()
+                    case .analyze:
+                        AnalyzeFeatureView()
+                    case .status:
+                        StatusFeatureView()
+                    case .optimize:
+                        OptimizeFeatureView()
                     }
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 560)
-            }
-
-            ToolbarItem(placement: .automatic) {
-                Button {
-                    showingSettings = true
-                } label: {
-                    Image(systemName: "gearshape")
-                }
-                .help("Settings")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .sheet(isPresented: $showingSettings) {
@@ -76,7 +67,76 @@ struct AppShellView: View {
                 .frame(minWidth: 520, minHeight: 420)
         }
     }
+
+    // MARK: - Custom Tab Bar
+
+    private var customTabBar: some View {
+        HStack(spacing: 0) {
+            // App icon
+            ZStack {
+                Circle()
+                    .fill(.white.opacity(0.12))
+                    .frame(width: 32, height: 32)
+                Image(systemName: "pawprint.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.85))
+            }
+            .padding(.leading, 14)
+
+            Spacer()
+
+            // Tab pills
+            HStack(spacing: 2) {
+                ForEach(AppSection.allCases) { section in
+                    tabPill(section)
+                }
+            }
+
+            Spacer()
+
+            // Settings
+            Button {
+                showingSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .frame(width: 32, height: 32)
+                    .background(.white.opacity(0.08))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 14)
+        }
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial.opacity(0.3))
+    }
+
+    private func tabPill(_ section: AppSection) -> some View {
+        let isSelected = selectedSection == section
+
+        return Button(action: {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                selectedSection = section
+            }
+        }) {
+            Text(section.title)
+                .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                .foregroundStyle(isSelected ? .black : .white.opacity(0.65))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background {
+                    if isSelected {
+                        Capsule().fill(.white)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .animation(.easeInOut(duration: 0.2), value: selectedSection)
+    }
 }
+
+// MARK: - Settings
 
 struct AppSettingsView: View {
     @State private var permissions = PermissionsService.shared
@@ -101,11 +161,8 @@ struct AppSettingsView: View {
                 HStack(spacing: 12) {
                     Button("Refresh") {
                         permissions.refresh()
-                        Task {
-                            whitelist = await SafetyGuard.shared.currentWhitelist()
-                        }
+                        Task { whitelist = await SafetyGuard.shared.currentWhitelist() }
                     }
-
                     Button("Open Privacy Settings") {
                         permissions.openPrivacySettings()
                     }
@@ -123,12 +180,9 @@ struct AppSettingsView: View {
                         .textFieldStyle(.roundedBorder)
 
                     Button("Add") {
-                        guard !newWhitelistEntry.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                            return
-                        }
+                        guard !newWhitelistEntry.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
                         let entry = newWhitelistEntry
                         newWhitelistEntry = ""
-
                         Task {
                             await SafetyGuard.shared.addToWhitelist(path: entry)
                             whitelist = await SafetyGuard.shared.currentWhitelist()
@@ -171,8 +225,7 @@ struct AppSettingsView: View {
         HStack(spacing: 6) {
             Image(systemName: value ? "checkmark.circle.fill" : "xmark.circle.fill")
                 .foregroundStyle(value ? .green : .red)
-            Text(label)
-                .font(.caption)
+            Text(label).font(.caption)
         }
         .padding(8)
         .background(Color.secondary.opacity(0.08))

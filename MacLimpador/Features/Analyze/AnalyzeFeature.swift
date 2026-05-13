@@ -30,17 +30,32 @@ actor AnalyzeService {
         let totalSize = entries.filter { $0.kind != .insight }.reduce(0) { $0 + $1.size }
         let totalFiles = Int64(entries.filter { $0.kind == .file }.count)
 
+        let (diskUsed, diskTotal) = Self.queryDiskUsage(at: path)
+
         let snapshot = AnalyzeSnapshot(
             scannedPath: path,
             scannedAt: Date(),
             entries: entries.sorted { $0.size > $1.size },
             largeFiles: largeFiles.sorted { $0.size > $1.size },
             totalSize: totalSize,
-            totalFiles: totalFiles
+            totalFiles: totalFiles,
+            diskUsedBytes: diskUsed,
+            diskTotalBytes: diskTotal
         )
 
         snapshotCache[path] = snapshot
         return snapshot
+    }
+
+    private nonisolated static func queryDiskUsage(at path: String) -> (used: Int64, total: Int64) {
+        do {
+            let attrs = try FileManager.default.attributesOfFileSystem(forPath: path)
+            let free = attrs[.systemFreeSize] as? Int64 ?? 0
+            let total = attrs[.systemSize] as? Int64 ?? 0
+            return (max(0, total - free), total)
+        } catch {
+            return (0, 0)
+        }
     }
 
     func perform(action: AnalyzeAction, path: String) async {
@@ -258,7 +273,7 @@ actor AnalyzeService {
             }
 
             let size = Int64(values.fileSize ?? 0)
-            guard size >= 50 * 1_000_000 else { continue }
+            guard size >= 100 * 1_000_000 else { continue }
 
             let ext = url.pathExtension.lowercased()
             let skipExts: Set<String> = ["swift", "go", "ts", "js", "py", "rs", "java", "kt", "c", "cpp", "h", "m"]

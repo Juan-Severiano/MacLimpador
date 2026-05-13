@@ -4,14 +4,15 @@ struct CleanView: View {
     @State private var viewModel = CleanViewModel()
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            content
-        }
-        .task {
-            if viewModel.plan == nil {
-                viewModel.scan()
+        ZStack {
+            if viewModel.plan == nil && !viewModel.isScanning {
+                landing
+            } else {
+                VStack(spacing: 0) {
+                    actionBar
+                    Divider().opacity(0.3)
+                    content
+                }
             }
         }
         .confirmationDialog(
@@ -28,10 +29,28 @@ struct CleanView: View {
         }
     }
 
-    private var header: some View {
+    // MARK: - Landing Page
+
+    private var landing: some View {
+        PlanetLandingView(
+            planet: .earth,
+            haiku: [
+                "Mountain rain washes old dust away.",
+                "The ebbing tide leaves all things new."
+            ],
+            ctaLabel: "Scan your Mac",
+            isLoading: viewModel.isScanning
+        ) {
+            viewModel.scan()
+        }
+    }
+
+    // MARK: - Action Bar (after scan)
+
+    private var actionBar: some View {
         HStack(spacing: 12) {
             Button(action: viewModel.scan) {
-                Label("Scan", systemImage: "magnifyingglass")
+                Label("Rescan", systemImage: "arrow.clockwise")
             }
             .disabled(viewModel.isScanning || viewModel.isExecuting)
 
@@ -45,12 +64,12 @@ struct CleanView: View {
             }
             .disabled(viewModel.selectedTargets.isEmpty || viewModel.isScanning || viewModel.isExecuting)
             .buttonStyle(.borderedProminent)
+            .tint(.red)
 
             Spacer()
 
             if viewModel.isScanning || viewModel.isExecuting {
-                ProgressView()
-                    .controlSize(.small)
+                ProgressView().controlSize(.small)
             }
 
             Text("Selected: \(viewModel.formattedSelectedTotalSize)")
@@ -59,6 +78,8 @@ struct CleanView: View {
         }
         .padding(12)
     }
+
+    // MARK: - Content
 
     @ViewBuilder
     private var content: some View {
@@ -73,12 +94,15 @@ struct CleanView: View {
                 }
             }
             .listStyle(.inset)
-            .overlay(alignment: .bottom) {
-                summaryFooter
-            }
+            .overlay(alignment: .bottom) { summaryFooter }
         } else if viewModel.isScanning {
-            ProgressView("Scanning cleanup targets...")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 12) {
+                ProgressView()
+                Text("Scanning cleanup targets…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ContentUnavailableView("No cleanup plan", systemImage: "sparkles")
         }
@@ -97,8 +121,7 @@ struct CleanView: View {
             .labelsHidden()
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(target.displayName)
-                    .lineLimit(1)
+                Text(target.displayName).lineLimit(1)
                 Text(target.path)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -118,18 +141,15 @@ struct CleanView: View {
     }
 
     private var summaryFooter: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             if let dryRun = viewModel.dryRunReport {
                 Text("Dry Run: \(dryRun.formattedTotalReclaimableSize) reclaimable across \(dryRun.targetCount) targets")
                     .font(.caption)
                 if !dryRun.warnings.isEmpty {
                     Text(dryRun.warnings.prefix(2).joined(separator: " • "))
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                        .lineLimit(2)
+                        .font(.caption2).foregroundStyle(.orange).lineLimit(2)
                 }
             }
-
             if let execution = viewModel.lastExecution {
                 Text("Last clean: reclaimed \(execution.formattedReclaimedSize), deleted \(execution.deletedCount), failed \(execution.failedCount)")
                     .font(.caption)

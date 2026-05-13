@@ -222,9 +222,16 @@ nonisolated struct AnalyzeSnapshot: Sendable {
     let largeFiles: [LargeFileEntry]
     let totalSize: Int64
     let totalFiles: Int64
+    let diskUsedBytes: Int64
+    let diskTotalBytes: Int64
 
     var formattedTotalSize: String {
         ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
+    }
+
+    var diskUsedPercent: Double {
+        guard diskTotalBytes > 0 else { return 0 }
+        return Double(diskUsedBytes) / Double(diskTotalBytes)
     }
 }
 
@@ -246,6 +253,22 @@ nonisolated struct StatusProcessAlert: Identifiable, Hashable, Sendable {
     }
 }
 
+nonisolated struct StatusProcess: Identifiable, Hashable, Sendable {
+    let id: UUID
+    let name: String
+    let pid: Int
+    let cpuPercent: Double
+    let memoryMB: Double
+
+    init(id: UUID = UUID(), name: String, pid: Int, cpuPercent: Double, memoryMB: Double) {
+        self.id = id
+        self.name = name
+        self.pid = pid
+        self.cpuPercent = cpuPercent
+        self.memoryMB = memoryMB
+    }
+}
+
 nonisolated struct StatusNetworkSnapshot: Sendable {
     let downloadMBps: Double
     let uploadMBps: Double
@@ -260,19 +283,43 @@ nonisolated struct StatusDiskSnapshot: Sendable {
 nonisolated struct StatusSnapshot: Sendable {
     let collectedAt: Date
     let hostName: String
+    let hardwareSummary: String
     let healthScore: Int
+    let healthMessage: String
     let cpuUsagePercent: Double
+    let cpuLoadAvg1: Double
+    let cpuLoadAvg5: Double
+    let cpuLoadAvg15: Double
     let memoryUsedBytes: Int64
     let memoryTotalBytes: Int64
+    let memoryPressureLevel: String
     let disk: StatusDiskSnapshot
+    let diskReadMBps: Double
+    let diskWriteMBps: Double
+    let gpuUsagePercent: Double?
+    let gpuName: String?
     let batteryPercent: Double?
     let batteryCharging: Bool?
+    let batteryHealth: String?
+    let batteryCycles: Int?
+    let thermalCPUTemp: Double?
+    let uptimeSecs: UInt64
     let network: StatusNetworkSnapshot
     let processAlerts: [StatusProcessAlert]
+    let topProcesses: [StatusProcess]
 
     var memoryUsedPercent: Double {
         guard memoryTotalBytes > 0 else { return 0 }
         return (Double(memoryUsedBytes) / Double(memoryTotalBytes)) * 100
+    }
+
+    var formattedUptime: String {
+        let days = uptimeSecs / 86400
+        let hours = (uptimeSecs % 86400) / 3600
+        let mins = (uptimeSecs % 3600) / 60
+        if days > 0 { return "\(days)d \(hours)h" }
+        if hours > 0 { return "\(hours)h \(mins)m" }
+        return "\(mins)m"
     }
 }
 
